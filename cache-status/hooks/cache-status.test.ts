@@ -15,6 +15,7 @@ import { planLayout } from './layout'
 import { compactAtPercentOf, contextLevelOf, limitLabelOf, limitLevelOf } from './meters'
 import { toSettings } from './settings'
 import { tickShades } from './shade'
+import { segmentedBarSvg, segmentedBarWidthPx } from './svg-bar'
 
 const SURFACES = ['terminal', 'desktop'] as const
 type Surface = (typeof SURFACES)[number]
@@ -78,6 +79,30 @@ const startSession = ($: Engine, surface: Surface) =>
 
 const completeTurn = ($: Engine) => $.turn.complete(TURN as never)
 
+// What each surface's cache line says: the terminal spells it out, the
+// desktop keeps to the compact reference style.
+const SAYS = {
+  terminal: {
+    warm: (m: string) => `● cache warm · ${m}`,
+    expiring: (m: string) => `◐ cache expiring · ${m}`,
+    narrowWarm: (m: string) => `● ${m}`,
+    working: '◌ replying…',
+    hit: '90% from cache (90k read, 9k written)',
+  },
+  desktop: {
+    warm: (m: string) => `● cache ${m}`,
+    expiring: (m: string) => `◐ cache ${m} expiring`,
+    narrowWarm: (m: string) => `● cache ${m}`,
+    working: '◌ cache replying…',
+    hit: '90% hit',
+  },
+} as const
+
+// A bar as the band's text shows it: ticks in the terminal; on the desktop
+// the bar is an SVG pill, which adds no text.
+const bar = (surface: Surface, filled: number, empty: number) =>
+  surface === 'terminal' ? '▰'.repeat(filled) + '▱'.repeat(empty) : ''
+
 const bandText = async (
   $: Engine,
   surface: Surface,
@@ -107,9 +132,9 @@ for (const surface of SURFACES) {
       await startSession($, surface)
       await completeTurn($)
       const text = await bandText($, surface)
-      expect(text).toContain('cache warm · 60m')
-      expect(text).toContain('hit ' + '▰'.repeat(18) + '▱'.repeat(2))
-      expect(text).toContain('90% from cache (90k read, 9k written)')
+      expect(text).toContain(SAYS[surface].warm('60m'))
+      if (surface === 'terminal') expect(text).toContain('hit ' + bar(surface, 18, 2) + ' 90%')
+      expect(text).toContain(SAYS[surface].hit)
     })
 
     test('shows the turn and session cost', async ($, on) => {
@@ -139,12 +164,14 @@ for (const surface of SURFACES) {
       await startSession($, surface)
       await completeTurn($)
       await clock.advance(30 * MINUTE_MS)
-      expect(await bandText($, surface)).toContain('● cache warm · 30m')
+      expect(await bandText($, surface)).toContain(SAYS[surface].warm('30m'))
       await clock.advance(20 * MINUTE_MS)
       const text = await bandText($, surface)
-      expect(text).toContain('◐ cache expiring · 10m')
-      expect(text).not.toContain('cache warm')
-      expect(await bandText($, surface, { columns: NARROW })).toContain('◐ 10m')
+      expect(text).toContain(SAYS[surface].expiring('10m'))
+      expect(text).not.toContain(SAYS[surface].warm('10m'))
+      expect(await bandText($, surface, { columns: NARROW })).toContain(
+        surface === 'terminal' ? '◐ 10m' : SAYS.desktop.expiring('10m'),
+      )
     })
 
     test('a 5m lifetime goes cold after five minutes', { options: { ttl: '5m' } }, async ($, on) => {
@@ -152,7 +179,7 @@ for (const surface of SURFACES) {
       engineBeneath(on, { usd: 0 })
       await startSession($, surface)
       await completeTurn($)
-      expect(await bandText($, surface)).toContain('cache warm · 5m')
+      expect(await bandText($, surface)).toContain(SAYS[surface].warm('5m'))
       await clock.advance(6 * MINUTE_MS)
       expect(await bandText($, surface)).toContain('cache cold')
     })
@@ -165,8 +192,8 @@ for (const surface of SURFACES) {
       cost.usd = 1.25
       await completeTurn($)
       const text = await bandText($, surface, { columns: NARROW })
-      expect(text).toContain('● 60m')
-      expect(text).toContain('▰'.repeat(9) + '▱ 90%')
+      expect(text).toContain(SAYS[surface].narrowWarm('60m'))
+      expect(text).toContain(bar(surface, 9, 1) + ' 90%')
       expect(text).toContain('cost $0.25')
       expect(text).not.toContain('read')
       expect(text).not.toContain('session')
@@ -187,9 +214,9 @@ for (const surface of SURFACES) {
       await completeTurn($)
       await $.session.measure(MEASURE as never)
       const text = await bandText($, surface)
-      expect(text).toContain('ctx ' + '▰'.repeat(6) + '▱'.repeat(4) + ' 62% (compacts at 83%)')
-      expect(text).toContain('usage 5h ' + '▰'.repeat(4) + '▱'.repeat(6) + ' 41%')
-      expect(text).toContain('week ' + '▰'.repeat(2) + '▱'.repeat(8) + ' 18%')
+      expect(text).toContain('ctx ' + bar(surface, 6, 4) + ' 62% (compacts at 83%)')
+      expect(text).toContain('usage 5h ' + bar(surface, 4, 6) + ' 41%')
+      expect(text).toContain('week ' + bar(surface, 2, 8) + ' 18%')
     })
 
     test('a narrow band shows the meters as percentages only', async ($, on) => {
@@ -207,8 +234,8 @@ for (const surface of SURFACES) {
       await startSession($, surface)
       await completeTurn($)
       const text = await bandText($, surface, { isWorking: true })
-      expect(text).toContain('◌ replying…')
-      expect(text).not.toContain('cache warm')
+      expect(text).toContain(SAYS[surface].working)
+      expect(text).not.toContain(SAYS[surface].warm('60m'))
     })
   })
 }
@@ -342,6 +369,41 @@ describe('the bar', () => {
     expect(shades[19]).toBe('#86efac')
     expect(brightness(shades[10])).toBeGreaterThan(brightness(shades[0]))
     expect(brightness(shades[19])).toBeGreaterThan(brightness(shades[10]))
+  })
+})
+
+describe('the desktop', () => {
+  test('draws each bar as an SVG pill instead of ticks', async ($, on) => {
+    mock.clock(on, { now: 1_000 })
+    engineBeneath(on, { usd: 0 })
+    await startSession($, 'desktop')
+    await completeTurn($)
+    await $.session.measure(MEASURE as never)
+    const ui = await $.ui.mount({
+      plugin: 'cache-status',
+      surface: 'desktop',
+      component: 'AbovePrompt',
+      props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: WIDE } as never,
+    })
+    expect(await ui.findAll({ type: 'Svg' })).toHaveLength(4)
+    const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text).join('')
+    expect(texts).not.toContain('▰')
+  })
+})
+
+describe('the desktop bar', () => {
+  test('fills blocks to the percentage, brightening toward the end', () => {
+    const svg = segmentedBarSvg({ percent: 50, level: 'green', segments: 20 })
+    const fills = [...svg.matchAll(/fill="([^"]+)"/g)].map(match => match[1])
+    expect(fills).toHaveLength(20)
+    expect(fills[0]).toBe('#14532d')
+    expect(fills.slice(10).every(fill => fill === '#3f3f46')).toBe(true)
+    expect(fills[9]).not.toBe(fills[0])
+  })
+
+  test('is as wide as its blocks and gaps', () => {
+    expect(segmentedBarWidthPx(20)).toBe(178)
+    expect(segmentedBarSvg({ percent: 140, level: 'red', segments: 10 })).not.toContain('#3f3f46')
   })
 })
 

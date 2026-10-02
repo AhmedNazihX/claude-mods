@@ -140,7 +140,12 @@ export const register: Register = (on, options) => {
       return next(e)
     }
 
-    return renderBand($.ui.resolve(e), {
+    // The desktop draws text in a proportional font, where tick characters
+    // read as a dashed line; it gets SVG pills, every other surface ticks.
+    const table = $.ui.resolve(e)
+    const Svg = e.surface === 'desktop' && 'Svg' in table ? table.Svg : undefined
+
+    return renderBand({ Box: table.Box, Text: table.Text, Svg }, {
       view: toView(snapshot, await read($, now), settings),
       meters: toMetersView(await read($, meters)),
       plan: planLayout(e.props.bodyColumns, settings.barSegments),

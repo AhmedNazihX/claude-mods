@@ -5,9 +5,11 @@ import type { LayoutPlan } from './layout'
 import { hasMeters } from './meters'
 import type { MetersView } from './meters'
 import { renderMetersLine } from './meters-line'
-import { renderTicks } from './ticks'
+import { renderDesktopCacheLine } from './desktop-line'
+import { renderBar } from './ticks'
+import type { BarElements } from './ticks'
 
-type Elements = Pick<ElementTable, 'Box' | 'Text'>
+type Elements = Pick<ElementTable, 'Box'> & BarElements
 
 export type BandInput = {
   view: CacheView
@@ -42,17 +44,18 @@ const costTextsOf = ({ view, plan }: BandInput): { turn?: string; session?: stri
     : { session: ` · session ${view.sessionCost}` }),
 })
 
-const renderCacheLine = ({ Box, Text }: Elements, input: BandInput) => {
+const renderCacheLine = (elements: Elements, input: BandInput) => {
+  const { Box, Text } = elements
   const { view, plan, isWorking } = input
   const costs = costTextsOf(input)
 
   return (
-    <Box>
+    <Box alignItems="center">
       <Text color={isWorking ? undefined : view.timeLevel} dimColor={isWorking}>
         {statusOf(input)}
       </Text>
       <Text dimColor>{' · hit '}</Text>
-      {renderTicks(Text, {
+      {renderBar(elements, {
         key: 'hit',
         percent: view.hitPercent,
         segments: plan.barSegments,
@@ -84,7 +87,16 @@ export const renderBand = (elements: Elements, input: BandInput) => {
       {hasMeters(input.meters)
         ? renderMetersLine(elements, input.meters, input.plan, input.isWorking)
         : null}
-      {renderCacheLine(elements, input)}
+      {elements.Svg === undefined
+        ? renderCacheLine(elements, input)
+        : renderDesktopCacheLine(elements, {
+            view: input.view,
+            plan: input.plan,
+            isWorking: input.isWorking,
+            turnCost: input.view.turnCost ?? undefined,
+            sessionCost:
+              input.plan.layout === 'narrow' ? undefined : input.view.sessionCost ?? undefined,
+          })}
     </Box>
   )
 }

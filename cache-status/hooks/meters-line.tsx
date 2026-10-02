@@ -2,9 +2,10 @@ import type { ElementTable } from 'claude-code'
 
 import type { LayoutPlan } from './layout'
 import type { MetersView } from './meters'
-import { renderTicks } from './ticks'
+import { renderBar } from './ticks'
+import type { BarElements } from './ticks'
 
-type Elements = Pick<ElementTable, 'Box' | 'Text'>
+type Elements = Pick<ElementTable, 'Box'> & BarElements
 
 const METER_SEGMENTS = 10
 const SEPARATOR = ' · '
@@ -18,11 +19,12 @@ const formatPercent = (percent: number): string => `${Math.round(percent)}%`
  * a bar for each; a narrow one only the percentages.
  */
 export const renderMetersLine = (
-  { Box, Text }: Elements,
+  elements: Elements,
   view: MetersView,
   plan: LayoutPlan,
   isWorking: boolean,
 ) => {
+  const { Box, Text } = elements
   const hasBars = plan.layout !== 'narrow'
   const meter = (key: string, label: string, percent: number, level: MetersView['limits'][number]['level'], suffix = '') => [
     <Text key={`${key}-label`} dimColor>
@@ -30,7 +32,7 @@ export const renderMetersLine = (
     </Text>,
     ...(hasBars
       ? [
-          ...renderTicks(Text, { key, percent, segments: METER_SEGMENTS, level, isDim: isWorking }),
+          ...renderBar(elements, { key, percent, segments: METER_SEGMENTS, level, isDim: isWorking }),
           <Text key={`${key}-gap`}> </Text>,
         ]
       : []),
@@ -63,7 +65,7 @@ export const renderMetersLine = (
   ]
 
   return (
-    <Box>
+    <Box alignItems="center">
       {parts.flatMap((part, index) =>
         index === 0 ? part : [<Text key={`sep-${index}`} dimColor>{SEPARATOR}</Text>, ...part],
       )}
