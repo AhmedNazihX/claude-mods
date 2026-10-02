@@ -20,9 +20,11 @@ const statusOf = ({ view, plan, isWorking }: BandInput): string => {
       ? '○ cache cold · next message re-caches the context'
       : '○ cold'
   }
-  if (plan.layout === 'wide') return `● cache warm · ${view.remaining}`
-  if (plan.layout === 'medium') return `● warm · ${view.remaining}`
-  return `● ${view.remaining}`
+  const isExpiring = view.timeLevel === 'red'
+  const [mark, word] = isExpiring ? ['◐', 'expiring'] : ['●', 'warm']
+  if (plan.layout === 'wide') return `${mark} cache ${word} · ${view.remaining}`
+  if (plan.layout === 'medium') return `${mark} ${word} · ${view.remaining}`
+  return `${mark} ${view.remaining}`
 }
 
 const hitTextOf = ({ view, plan }: BandInput): string =>
@@ -30,25 +32,22 @@ const hitTextOf = ({ view, plan }: BandInput): string =>
     ? ` ${view.hitPercent}% from cache (${view.read} read, ${view.written} written)`
     : ` ${view.hitPercent}%`
 
-const costTextsOf = ({ view, plan }: BandInput): { turn?: string; session?: string } => {
-  if (plan.layout === 'narrow') {
-    return view.turnCost === null ? {} : { turn: ` · ${view.turnCost}` }
-  }
-  return {
-    ...(view.turnCost === null ? {} : { turn: ` · turn ${view.turnCost}` }),
-    ...(view.sessionCost === null ? {} : { session: ` · session ${view.sessionCost}` }),
-  }
-}
+const costTextsOf = ({ view, plan }: BandInput): { turn?: string; session?: string } => ({
+  ...(view.turnCost === null ? {} : { turn: ` · cost ${view.turnCost}` }),
+  ...(plan.layout === 'narrow' || view.sessionCost === null
+    ? {}
+    : { session: ` · session ${view.sessionCost}` }),
+})
 
 /**
- * The band's one line: the countdown, the shaded bar, the hit rate and the
- * cost, as much of each as the layout leaves room for. While a reply runs the
+ * The band's one line: the countdown, the hit-rate bar (its length and its
+ * colour both the share of input the cache served) and the turn's cost, as much of each as the layout leaves room for. While a reply runs the
  * line dims, its numbers being the last turn's.
  */
 export const renderBand = ({ Box, Text }: Elements, input: BandInput) => {
   const { view, plan, isWorking } = input
   const filled = filledTicksOf(view.hitPercent, plan.barSegments)
-  const ticks = tickShades(view.costLevel, plan.barSegments)
+  const ticks = tickShades(view.hitLevel, plan.barSegments)
     .slice(0, filled)
     .map((shade, index) => (
       <Text key={`tick-${index}`} color={shade} dimColor={isWorking}>
@@ -62,7 +61,7 @@ export const renderBand = ({ Box, Text }: Elements, input: BandInput) => {
       <Text color={isWorking ? undefined : view.timeLevel} dimColor={isWorking}>
         {statusOf(input)}
       </Text>
-      <Text dimColor>{' · '}</Text>
+      <Text dimColor>{' · hit '}</Text>
       {ticks}
       <Text dimColor>{EMPTY_TICK.repeat(plan.barSegments - filled)}</Text>
       <Text dimColor>{hitTextOf(input)}</Text>

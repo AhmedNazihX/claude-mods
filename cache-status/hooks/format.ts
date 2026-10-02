@@ -6,6 +6,8 @@ const MS_PER_SECOND = 1000
 export const FILLED_TICK = '▰'
 export const EMPTY_TICK = '▱'
 
+const HIT_GREEN_MIN_PERCENT = 80
+const HIT_YELLOW_MIN_PERCENT = 50
 const TIME_GREEN_MIN_FRACTION = 0.5
 const TIME_YELLOW_MIN_FRACTION = 0.2
 
@@ -16,6 +18,7 @@ export type CacheView = {
   remaining: string
   timeLevel: Level
   hitPercent: number
+  hitLevel: Level
   costLevel: Level
   read: string
   written: string
@@ -54,6 +57,12 @@ export const turnCostOf = (
   return sessionUsd < baseline ? sessionUsd : sessionUsd - baseline
 }
 
+export const hitLevelOf = (percent: number): Level => {
+  if (percent >= HIT_GREEN_MIN_PERCENT) return 'green'
+  if (percent >= HIT_YELLOW_MIN_PERCENT) return 'yellow'
+  return 'red'
+}
+
 export const costLevelOf = (usd: number | null, settings: Settings): Level => {
   if (usd === null || usd < settings.costYellowUsd) return 'green'
   if (usd < settings.costRedUsd) return 'yellow'
@@ -89,6 +98,7 @@ export const toView = (
     remaining: formatRemaining(remainingMs),
     timeLevel: timeLevelOf(remainingMs, settings),
     hitPercent,
+    hitLevel: hitLevelOf(hitPercent),
     costLevel: costLevelOf(snapshot.turnUsd, settings),
     read: formatTokens(snapshot.readTokens),
     written: formatTokens(snapshot.writtenTokens),

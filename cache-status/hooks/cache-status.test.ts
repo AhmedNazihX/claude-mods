@@ -4,6 +4,7 @@ import type { On } from 'claude-code'
 
 import {
   costLevelOf,
+  hitLevelOf,
   formatUsd,
   remainingMsOf,
   timeLevelOf,
@@ -85,7 +86,7 @@ for (const surface of SURFACES) {
       await completeTurn($)
       const text = await bandText($, surface)
       expect(text).toContain('cache warm · 60m')
-      expect(text).toContain('▰'.repeat(18) + '▱'.repeat(2))
+      expect(text).toContain('hit ' + '▰'.repeat(18) + '▱'.repeat(2))
       expect(text).toContain('90% from cache (90k read, 9k written)')
     })
 
@@ -97,7 +98,7 @@ for (const surface of SURFACES) {
       cost.usd = 1.25
       await completeTurn($)
       const text = await bandText($, surface)
-      expect(text).toContain('turn $0.25')
+      expect(text).toContain('cost $0.25')
       expect(text).toContain('session $1.25')
     })
 
@@ -108,6 +109,20 @@ for (const surface of SURFACES) {
       await completeTurn($)
       await clock.advance(HOUR_MS + 30_000)
       expect(await bandText($, surface)).toContain('cache cold')
+    })
+
+    test('says the cache is expiring once the countdown turns red', async ($, on) => {
+      const clock = mock.clock(on, { now: 1_000 })
+      engineBeneath(on, { usd: 0 })
+      await startSession($, surface)
+      await completeTurn($)
+      await clock.advance(30 * MINUTE_MS)
+      expect(await bandText($, surface)).toContain('● cache warm · 30m')
+      await clock.advance(20 * MINUTE_MS)
+      const text = await bandText($, surface)
+      expect(text).toContain('◐ cache expiring · 10m')
+      expect(text).not.toContain('cache warm')
+      expect(await bandText($, surface, { columns: NARROW })).toContain('◐ 10m')
     })
 
     test('a 5m lifetime goes cold after five minutes', { options: { ttl: '5m' } }, async ($, on) => {
@@ -130,7 +145,7 @@ for (const surface of SURFACES) {
       const text = await bandText($, surface, { columns: NARROW })
       expect(text).toContain('● 60m')
       expect(text).toContain('▰'.repeat(9) + '▱ 90%')
-      expect(text).toContain('$0.25')
+      expect(text).toContain('cost $0.25')
       expect(text).not.toContain('read')
       expect(text).not.toContain('session')
     })
@@ -174,6 +189,15 @@ describe('the turn cost', () => {
     expect(costLevelOf(null, DEFAULTS)).toBe('green')
     const strict = toSettings({ costYellowUsd: 0.01, costRedUsd: 0.05 })
     expect(costLevelOf(0.03, strict)).toBe('yellow')
+  })
+})
+
+describe('the hit rate', () => {
+  test('colours the bar green, then yellow below 80%, then red below 50%', () => {
+    expect(hitLevelOf(94)).toBe('green')
+    expect(hitLevelOf(80)).toBe('green')
+    expect(hitLevelOf(48 + 12)).toBe('yellow')
+    expect(hitLevelOf(48)).toBe('red')
   })
 })
 

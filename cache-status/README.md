@@ -3,7 +3,7 @@
 A band above the Claude Code prompt that shows how the prompt cache is doing and what each reply costs.
 
 ```
-● cache warm · 52m · ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱ 94% from cache (120k read, 3k written) · turn $0.08 · session $3.21
+● cache warm · 52m · hit ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱ 94% from cache (120k read, 3k written) · cost $0.08 · session $3.21
 ```
 
 It appears after the first reply of a session and works in the terminal, the desktop app and VS Code.
@@ -13,10 +13,11 @@ It appears after the first reply of a session and works in the terminal, the des
 | Part | Meaning |
 |---|---|
 | `● cache warm · 52m` | The cache is warm and expires in 52 minutes unless you send another message. Green, then yellow below 50% of the lifetime, then red below 20%. |
+| `◐ cache expiring · 10m` | Less than 20% of the lifetime is left (12 minutes on the 1h cache): send a message soon to keep it. |
 | `○ cache cold` | The cache expired: the next message re-caches the whole context, which costs more. |
 | `◌ replying…` | A reply is running; the dimmed numbers are the previous turn's. |
-| The bar | How much of the last turn's input came from the cache, one tick per 5%. Its colour follows the turn's cost (green, yellow, red), shaded dark to light along the bar. |
-| `turn $0.08` | What the last turn cost: every request it made, tool calls and subagents included. |
+| `hit` bar | How much of the last turn's input came from the cache, one tick per 5%. Green from 80%, yellow from 50%, red below; shaded dark to light along the bar. |
+| `cost $0.08` | What the last turn cost: every request it made, tool calls and subagents included. Green, then yellow and red at the thresholds in Settings. |
 | `session $3.21` | The session total, the same figure `/cost` shows. |
 
 Costs come from Claude Code's own ledger, at list prices (or your organization's configured pricing). On a subscription they show what the usage would cost on the API, not what you are charged.
@@ -30,8 +31,8 @@ Open `/config` and find the `cache-status` rows:
 | Setting | Default | |
 |---|---|---|
 | Cache lifetime | `1h` | Set to `5m` if your sessions use the 5-minute cache, or the countdown will be wrong. |
-| Yellow from ($) | `0.10` | A turn costing this much or more turns the bar yellow. |
-| Red from ($) | `0.50` | A turn costing this much or more turns the bar red. |
+| Yellow from ($) | `0.10` | A turn costing this much or more turns the cost yellow. |
+| Red from ($) | `0.50` | A turn costing this much or more turns the cost red. |
 | Bar length | `20` | Ticks in the bar, 5 to 40. |
 
 ## What it does and doesn't do
