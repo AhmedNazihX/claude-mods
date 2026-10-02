@@ -3,6 +3,7 @@
 A band above the Claude Code prompt that shows how the prompt cache is doing and what each reply costs.
 
 ```
+ctx ▰▰▰▰▰▰▱▱▱▱ 62% (compacts at 83%) · usage 5h ▰▰▰▰▱▱▱▱▱▱ 41% · week ▰▰▱▱▱▱▱▱▱▱ 18%
 ● cache warm · 52m · hit ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱ 94% from cache (120k read, 3k written) · cost $0.08 · session $3.21
 ```
 
@@ -19,10 +20,12 @@ It appears after the first reply of a session and works in the terminal, the des
 | `hit` bar | How much of the last turn's input came from the cache, one tick per 5%. Green from 80%, yellow from 50%, red below; shaded dark to light along the bar. |
 | `cost $0.08` | What the last turn cost: every request it made, tool calls and subagents included. Green, then yellow and red at the thresholds in Settings. |
 | `session $3.21` | The session total, the same figure `/cost` shows. |
+| `ctx 62% (compacts at 83%)` | How full the context window is, and where auto-compact will summarise it. Green, yellow from 75% of the way to that point, red from 90%. |
+| `usage 5h 41%` · `week 18%` | Your plan's usage windows (Pro/Max), as Claude Code reads them. Green, yellow from 60%, red from 85%. Not shown on API-key billing. |
 
 Costs come from Claude Code's own ledger, at list prices (or your organization's configured pricing). On a subscription they show what the usage would cost on the API, not what you are charged.
 
-On a narrow window the band drops the token counts, then the session total, and halves the bar.
+On a narrow window the band drops the token counts, then the session total, halves the bar, and shows the meters as percentages only.
 
 ## Settings
 
@@ -37,7 +40,7 @@ Open `/config` and find the `cache-status` rows:
 
 ## What it does and doesn't do
 
-It reads each turn's token usage and the session's cost total, and draws the band. It makes no network calls, runs no commands, and reads or writes no files.
+It reads each turn's token usage, the session's cost total, the context window's fill and the plan usage windows, and draws the band. It makes no network calls, runs no commands, and reads or writes no files.
 
 ## Development
 

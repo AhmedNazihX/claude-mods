@@ -1,10 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { CacheSnapshot } from '../types'
+import type { CacheSnapshot, Meters } from '../types'
 import { renderBand } from './band'
 import { remainingMsOf, toView, turnCostOf } from './format'
 import { planLayout } from './layout'
+import { compactAtPercentOf, toMetersView } from './meters'
 import { toSettings } from './settings'
 import type { Settings } from './settings'
 
@@ -16,6 +17,12 @@ const costBaseline = atom(
   { plugin: 'cache-status', key: 'costBaseline' } as const,
   null,
 )
+const EMPTY_METERS: Meters = {
+  contextPercent: null,
+  compactAtPercent: null,
+  rateLimits: [],
+}
+const meters = atom({ plugin: 'cache-status', key: 'meters' } as const, EMPTY_METERS)
 
 async function readSessionUsd($: EngineInterface): Promise<number | null> {
   try {
@@ -55,9 +62,30 @@ function startTicker($: EngineInterface, settings: Settings) {
   })
 }
 
+// The window the auto-compact point was last read for: a new one (a model
+// switch) means reading it again.
+let compactWindow: number | undefined
+
+// Reads where auto-compact runs, as a percentage of the window. The summary
+// breakdown is estimated locally and sends no request.
+async function refreshCompactPoint($: EngineInterface) {
+  try {
+    const usage = await $.session.usage({ breakdown: 'summary' })
+    const breakdown = usage.context.breakdown
+    compactWindow = usage.context.window
+    const compactAtPercent = breakdown?.isAutoCompactEnabled
+      ? compactAtPercentOf(breakdown.autoCompactThreshold, usage.context.window)
+      : null
+    await update($, meters, current => ({ ...current, compactAtPercent }))
+  } catch (error) {
+    $.ui.log(`cache-status could not read the auto-compact point: ${error}`, { to: 'debug' })
+  }
+}
+
 export const register: Register = (on, options) => {
   const settings = toSettings(options)
   on('session.start', async ($, e, next) => {
+    await refreshCompactPoint($)
     const sessionUsd = await readSessionUsd($)
     await update($, costBaseline, () => sessionUsd)
     const snapshot = await read($, last)
@@ -93,6 +121,19 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  on('session.measure', async ($, e, next) => {
+    if (compactWindow !== e.context.window) {
+      await refreshCompactPoint($)
+    }
+    await update($, meters, current => ({
+      ...current,
+      contextPercent: e.context.percent ?? current.contextPercent,
+      rateLimits: e.rateLimits.map(({ kind, percentUsed }) => ({ kind, percentUsed })),
+    }))
+
+    return next(e)
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const snapshot = await read($, last)
     if (e.props.hasSurvey || snapshot === null) {
@@ -101,6 +142,7 @@ export const register: Register = (on, options) => {
 
     return renderBand($.ui.resolve(e), {
       view: toView(snapshot, await read($, now), settings),
+      meters: toMetersView(await read($, meters)),
       plan: planLayout(e.props.bodyColumns, settings.barSegments),
       isWorking: e.props.isWorking,
     })

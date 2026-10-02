@@ -1,14 +1,17 @@
 import type { ElementTable } from 'claude-code'
 
-import { EMPTY_TICK, FILLED_TICK, filledTicksOf } from './format'
 import type { CacheView } from './format'
 import type { LayoutPlan } from './layout'
-import { tickShades } from './shade'
+import { hasMeters } from './meters'
+import type { MetersView } from './meters'
+import { renderMetersLine } from './meters-line'
+import { renderTicks } from './ticks'
 
 type Elements = Pick<ElementTable, 'Box' | 'Text'>
 
 export type BandInput = {
   view: CacheView
+  meters: MetersView
   plan: LayoutPlan
   isWorking: boolean
 }
@@ -39,21 +42,8 @@ const costTextsOf = ({ view, plan }: BandInput): { turn?: string; session?: stri
     : { session: ` · session ${view.sessionCost}` }),
 })
 
-/**
- * The band's one line: the countdown, the hit-rate bar (its length and its
- * colour both the share of input the cache served) and the turn's cost, as much of each as the layout leaves room for. While a reply runs the
- * line dims, its numbers being the last turn's.
- */
-export const renderBand = ({ Box, Text }: Elements, input: BandInput) => {
+const renderCacheLine = ({ Box, Text }: Elements, input: BandInput) => {
   const { view, plan, isWorking } = input
-  const filled = filledTicksOf(view.hitPercent, plan.barSegments)
-  const ticks = tickShades(view.hitLevel, plan.barSegments)
-    .slice(0, filled)
-    .map((shade, index) => (
-      <Text key={`tick-${index}`} color={shade} dimColor={isWorking}>
-        {FILLED_TICK}
-      </Text>
-    ))
   const costs = costTextsOf(input)
 
   return (
@@ -62,8 +52,13 @@ export const renderBand = ({ Box, Text }: Elements, input: BandInput) => {
         {statusOf(input)}
       </Text>
       <Text dimColor>{' · hit '}</Text>
-      {ticks}
-      <Text dimColor>{EMPTY_TICK.repeat(plan.barSegments - filled)}</Text>
+      {renderTicks(Text, {
+        key: 'hit',
+        percent: view.hitPercent,
+        segments: plan.barSegments,
+        level: view.hitLevel,
+        isDim: isWorking,
+      })}
       <Text dimColor>{hitTextOf(input)}</Text>
       {costs.turn === undefined ? null : (
         <Text color={view.costLevel} dimColor={isWorking}>
@@ -71,6 +66,25 @@ export const renderBand = ({ Box, Text }: Elements, input: BandInput) => {
         </Text>
       )}
       {costs.session === undefined ? null : <Text dimColor>{costs.session}</Text>}
+    </Box>
+  )
+}
+
+/**
+ * The band: the meters line (context fill, plan usage) once there are
+ * figures, and under it, next to the prompt, the cache line (countdown,
+ * hit-rate bar, the turn's cost).
+ * While a reply runs both dim, their numbers being the last turn's.
+ */
+export const renderBand = (elements: Elements, input: BandInput) => {
+  const { Box } = elements
+
+  return (
+    <Box flexDirection="column">
+      {hasMeters(input.meters)
+        ? renderMetersLine(elements, input.meters, input.plan, input.isWorking)
+        : null}
+      {renderCacheLine(elements, input)}
     </Box>
   )
 }

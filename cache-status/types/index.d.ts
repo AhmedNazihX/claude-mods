@@ -7,12 +7,21 @@ export type CacheSnapshot = {
   sessionUsd: number | null
 }
 
+export type RateLimitReading = { kind: string; percentUsed: number }
+
+export type Meters = {
+  contextPercent: number | null
+  compactAtPercent: number | null
+  rateLimits: RateLimitReading[]
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'cache-status': {
       last: CacheSnapshot | null
       now: number
       costBaseline: number | null
+      meters: Meters
     }
   }
 }

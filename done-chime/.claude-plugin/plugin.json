@@ -1,0 +1,36 @@
+{
+  "name": "done-chime",
+  "version": "0.2.0",
+  "description": "Plays a chime and shows a toast when a long Claude reply finishes, so you can look away while it works",
+  "author": {
+    "name": "Ahmed"
+  },
+  "userConfig": {
+    "minSeconds": {
+      "type": "number",
+      "title": "Chime after (seconds)",
+      "description": "Only replies that took at least this long chime; shorter ones stay quiet",
+      "default": 30
+    },
+    "chime": {
+      "type": "string",
+      "title": "Chime sound",
+      "description": "arpeggio: four rising notes; rising: two rising notes; bell: one ringing bell; marimba: two soft wooden notes; ding-dong: doorbell; glass: one short ping",
+      "options": [
+        "arpeggio",
+        "rising",
+        "bell",
+        "marimba",
+        "ding-dong",
+        "glass"
+      ],
+      "default": "arpeggio"
+    },
+    "sound": {
+      "type": "boolean",
+      "title": "Play a sound",
+      "description": "Off shows the toast only",
+      "default": true
+    }
+  }
+}

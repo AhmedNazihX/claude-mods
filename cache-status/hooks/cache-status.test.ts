@@ -12,6 +12,7 @@ import {
   turnCostOf,
 } from './format'
 import { planLayout } from './layout'
+import { compactAtPercentOf, contextLevelOf, limitLabelOf, limitLevelOf } from './meters'
 import { toSettings } from './settings'
 import { tickShades } from './shade'
 
@@ -40,16 +41,37 @@ const TURN = {
   usage: USAGE,
 } as const
 
-// Stands in for the engine beneath the plugin: the session's cost ledger, the
-// end of a turn, and an empty band.
+const WINDOW = 1_000_000
+const COMPACT_THRESHOLD = 830_000
+
+// Stands in for the engine beneath the plugin: the session's cost ledger and
+// context window (auto-compact at 83%), the end of a turn, and an empty band.
 const engineBeneath = (on: On, cost: { usd: number }) => {
   on('session.usage', () => ({
-    value: { startedAt: 0, context: { window: 1_000_000 }, rateLimits: [], cost },
+    value: {
+      startedAt: 0,
+      context: {
+        window: WINDOW,
+        breakdown: { isAutoCompactEnabled: true, autoCompactThreshold: COMPACT_THRESHOLD } as never,
+      },
+      rateLimits: [],
+      cost,
+    },
   }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.measure', ($, e) => ({ changed: e.changed }))
   on('turn.complete', ($, e) => ({ text: e.answer }))
   on('ui.render', () => ({ type: 'Box' }) as never)
 }
+
+const MEASURE = {
+  context: { window: WINDOW, tokens: 620_000, percent: 62 },
+  rateLimits: [
+    { kind: 'five_hour', percentUsed: 41 },
+    { kind: 'seven_day', percentUsed: 18 },
+  ],
+  changed: ['context', 'rateLimits'],
+} as const
 
 const startSession = ($: Engine, surface: Surface) =>
   $.session.start({ cwd: '/', surface, isInteractive: true } as never)
@@ -150,6 +172,35 @@ for (const surface of SURFACES) {
       expect(text).not.toContain('session')
     })
 
+    test('shows no meters line before any reading', async ($, on) => {
+      mock.clock(on, { now: 1_000 })
+      engineBeneath(on, { usd: 0 })
+      await startSession($, surface)
+      await completeTurn($)
+      expect(await bandText($, surface)).not.toContain('ctx')
+    })
+
+    test('shows the context fill against the compact point and the plan usage', async ($, on) => {
+      mock.clock(on, { now: 1_000 })
+      engineBeneath(on, { usd: 0 })
+      await startSession($, surface)
+      await completeTurn($)
+      await $.session.measure(MEASURE as never)
+      const text = await bandText($, surface)
+      expect(text).toContain('ctx ' + '▰'.repeat(6) + '▱'.repeat(4) + ' 62% (compacts at 83%)')
+      expect(text).toContain('usage 5h ' + '▰'.repeat(4) + '▱'.repeat(6) + ' 41%')
+      expect(text).toContain('week ' + '▰'.repeat(2) + '▱'.repeat(8) + ' 18%')
+    })
+
+    test('a narrow band shows the meters as percentages only', async ($, on) => {
+      mock.clock(on, { now: 1_000 })
+      engineBeneath(on, { usd: 0 })
+      await startSession($, surface)
+      await completeTurn($)
+      await $.session.measure(MEASURE as never)
+      expect(await bandText($, surface, { columns: NARROW })).toContain('ctx 62% · usage 5h 41% · week 18%')
+    })
+
     test('says a reply is running while one is', async ($, on) => {
       mock.clock(on, { now: 1_000 })
       engineBeneath(on, { usd: 0 })
@@ -198,6 +249,33 @@ describe('the hit rate', () => {
     expect(hitLevelOf(80)).toBe('green')
     expect(hitLevelOf(48 + 12)).toBe('yellow')
     expect(hitLevelOf(48)).toBe('red')
+  })
+})
+
+describe('the meters', () => {
+  test('colour the context by how near it is to compacting', () => {
+    expect(contextLevelOf(40, 80)).toBe('green')
+    expect(contextLevelOf(65, 80)).toBe('yellow')
+    expect(contextLevelOf(75, 80)).toBe('red')
+    expect(contextLevelOf(70, null)).toBe('green')
+  })
+
+  test('colour plan usage green, then yellow from 60%, then red from 85%', () => {
+    expect(limitLevelOf(41)).toBe('green')
+    expect(limitLevelOf(70)).toBe('yellow')
+    expect(limitLevelOf(90)).toBe('red')
+  })
+
+  test('place the compact point as a share of the window', () => {
+    expect(compactAtPercentOf(830_000, 1_000_000)).toBe(83)
+    expect(compactAtPercentOf(undefined, 1_000_000)).toBeNull()
+    expect(compactAtPercentOf(1, 0)).toBeNull()
+  })
+
+  test('name the usage windows briefly', () => {
+    expect(limitLabelOf('five_hour')).toBe('5h')
+    expect(limitLabelOf('seven_day')).toBe('week')
+    expect(limitLabelOf('something_new')).toBe('something_new')
   })
 })
 
@@ -264,5 +342,18 @@ describe('the bar', () => {
     expect(shades[19]).toBe('#86efac')
     expect(brightness(shades[10])).toBeGreaterThan(brightness(shades[0]))
     expect(brightness(shades[19])).toBeGreaterThan(brightness(shades[10]))
+  })
+})
+
+describe('the band order', () => {
+  test('puts the meters above the cache line', async ($, on) => {
+    mock.clock(on, { now: 1_000 })
+    engineBeneath(on, { usd: 0 })
+    await startSession($, 'terminal')
+    await completeTurn($)
+    await $.session.measure(MEASURE as never)
+    const text = await bandText($, 'terminal')
+    expect(text.indexOf('ctx')).toBeGreaterThanOrEqual(0)
+    expect(text.indexOf('ctx')).toBeLessThan(text.indexOf('cache warm'))
   })
 })
