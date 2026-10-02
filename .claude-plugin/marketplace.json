@@ -1,0 +1,15 @@
+{
+  "name": "ahmed-mods",
+  "description": "Mods for Claude Code: live bands and panes inside the terminal, desktop and VS Code",
+  "owner": {
+    "name": "Ahmed"
+  },
+  "plugins": [
+    {
+      "name": "cache-status",
+      "source": "./cache-status",
+      "description": "Prompt-cache countdown, hit-rate bar and turn cost above the prompt",
+      "version": "0.2.0"
+    }
+  ]
+}

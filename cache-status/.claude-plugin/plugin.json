@@ -1,0 +1,39 @@
+{
+  "name": "cache-status",
+  "version": "0.2.0",
+  "description": "A band above the prompt showing whether the prompt cache is warm, how much of the last turn it served, and what the turn cost",
+  "author": {
+    "name": "Ahmed"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "ttl": {
+      "type": "string",
+      "title": "Cache lifetime",
+      "description": "How long the prompt cache stays warm after a reply",
+      "options": [
+        "5m",
+        "1h"
+      ],
+      "default": "1h"
+    },
+    "costYellowUsd": {
+      "type": "number",
+      "title": "Yellow from ($)",
+      "description": "A turn costing this much or more turns the bar yellow",
+      "default": 0.1
+    },
+    "costRedUsd": {
+      "type": "number",
+      "title": "Red from ($)",
+      "description": "A turn costing this much or more turns the bar red",
+      "default": 0.5
+    },
+    "barSegments": {
+      "type": "number",
+      "title": "Bar length",
+      "description": "Ticks in the bar (5 to 40)",
+      "default": 20
+    }
+  }
+}
