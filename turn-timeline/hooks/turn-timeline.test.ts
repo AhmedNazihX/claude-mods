@@ -2,9 +2,9 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { fit, formatDuration, formatOffset } from './format'
+import { fit, fitStart, formatDuration, formatOffset } from './format'
 import { toSettings } from './settings'
-import { printable, summarize, toolLabel } from './summary'
+import { displayPath, printable, summarize, toolLabel } from './summary'
 import { addCall, endTurn, finishCall, outcomeOf, startTurn, toolCounts } from './timeline'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -64,11 +64,27 @@ for (const surface of SURFACES) {
       expect(text).toContain('✓ done ')
       expect(text).toContain('4 calls')
       expect(text).toContain('“fix the failing test”')
-      expect(text).toMatch(/✓ \|\s*\+0:00 \|\s*0\.3s \|Read\s+\|band\.tsx/)
+      expect(text).toMatch(/✓ \|\s*\+0:00 \|\s*0\.3s \|Read\s+\|\/app\/src\/band\.tsx/)
       expect(text).toMatch(/✓ \|\s*\+0:00 \|\s*42s \|Bash\s+\|Run the tests/)
       expect(text).toContain('✗ ')
       expect(text).toContain('⊘ ')
       expect(text).toContain('Read 1 · Bash 1 · WebFetch 1 · Write 1')
+    })
+
+    test('shows file paths from the project folder', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on, clock)
+      mock.env(on, { HOME: '/Users/me' })
+      on('session.start', ($, e) => ({ cwd: e.cwd }))
+      on('command.register', () => ({ value: undefined }) as never)
+      on('ui.open', () => ({ value: { isPlaced: true } }) as never)
+      await $.session.start({ cwd: '/Users/me/Workspace/app', surface, isInteractive: true } as never)
+      await startReply($)
+      await $.tool.call({ tool: 'Edit', file_path: '/Users/me/Workspace/app/hooks/band.tsx' } as never)
+      await $.tool.call({ tool: 'Read', file_path: '/Users/me/Workspace/other/hooks/band.tsx' } as never)
+      const text = await paneText($, surface)
+      expect(text).toContain('|hooks/band.tsx')
+      expect(text).toContain('|~/Workspace/other/hooks/band.tsx')
     })
 
     test('shows a running reply and marks subagent calls', async ($, on) => {
@@ -98,19 +114,28 @@ for (const surface of SURFACES) {
 
 describe('summaries', () => {
   test('say what each tool did', () => {
-    expect(summarize('Bash', { command: 'npm run lint', description: 'Lint the app' })).toBe('Lint the app')
-    expect(summarize('Bash', { command: 'git   status\n--short' })).toBe('git status --short')
-    expect(summarize('Edit', { file_path: '/repo/src/app.tsx' })).toBe('app.tsx')
-    expect(summarize('Grep', { pattern: 'useEffect' })).toBe('useEffect')
-    expect(summarize('WebFetch', { url: 'https://docs.anthropic.com/en/x' })).toBe('docs.anthropic.com')
-    expect(summarize('Agent', { description: 'Survey work', prompt: '…' })).toBe('Survey work')
-    expect(summarize('Mystery', { count: 3, note: 'hello' })).toBe('hello')
+    const text = (tool: string, input: Record<string, unknown>) => summarize(tool, input).text
+    expect(text('Bash', { command: 'npm run lint', description: 'Lint the app' })).toBe('Lint the app')
+    expect(text('Bash', { command: 'git   status\n--short' })).toBe('git status --short')
+    expect(text('Grep', { pattern: 'useEffect' })).toBe('useEffect')
+    expect(text('WebFetch', { url: 'https://docs.anthropic.com/en/x' })).toBe('docs.anthropic.com')
+    expect(text('Agent', { description: 'Survey work', prompt: '…' })).toBe('Survey work')
+    expect(text('Mystery', { count: 3, note: 'hello' })).toBe('hello')
+  })
+
+  test('give file tools their path, from the project folder or ~', () => {
+    const places = { cwd: '/Users/me/Workspace/app', home: '/Users/me' }
+    expect(summarize('Edit', { file_path: '/Users/me/Workspace/app/src/band.tsx' }, places)).toEqual({ text: 'src/band.tsx', isPath: true })
+    expect(summarize('Read', { file_path: '/Users/me/.claude/settings.json' }, places).text).toBe('~/.claude/settings.json')
+    expect(summarize('Write', { file_path: '/etc/hosts' }, places).text).toBe('/etc/hosts')
+    expect(displayPath('/Users/me/Workspace/app2/x.ts', places)).toBe('~/Workspace/app2/x.ts')
   })
 
   test('drop terminal escape sequences and other control characters', () => {
     const esc = String.fromCharCode(27)
     const bell = String.fromCharCode(7)
-    expect(summarize('Bash', { command: `echo ${esc}[2J${esc}]0;pwned${bell}hi` })).toBe('echo [2J]0;pwnedhi')
+    expect(summarize('Bash', { command: `echo ${esc}[2J${esc}]0;pwned${bell}hi` }).text).toBe('echo [2J]0;pwnedhi')
+    expect(summarize('Edit', { file_path: `/a/${esc}[2Jb.ts` }).text).toBe('/a/[2Jb.ts')
     expect(printable(`a${esc}[31mb\tc`)).toBe('a[31mb c')
     expect(startTurn('t', `fix ${esc}[1mthis`, 0).prompt).toBe('fix [1mthis')
   })
@@ -155,6 +180,11 @@ describe('formatting', () => {
     expect(formatOffset(72_500)).toBe('+1:12')
   })
 
+  test('fitStart cuts a path from the left, keeping the file name', () => {
+    expect(fitStart('cache-status/hooks/band.tsx', 16)).toBe('…/hooks/band.tsx')
+    expect(fitStart('band.tsx', 16)).toBe('band.tsx')
+  })
+
   test('fit cuts with an ellipsis', () => {
     expect(fit('abcdef', 4)).toBe('abc…')
     expect(fit('abc', 4)).toBe('abc')
@@ -164,7 +194,7 @@ describe('formatting', () => {
 
 describe('the timeline state', () => {
   test('closes calls left running when the turn ends', () => {
-    const call = { id: 'c1', tool: 'Bash', summary: '', isSubagent: false, startedAt: 0, endedAt: null, outcome: 'running' as const }
+    const call = { id: 'c1', tool: 'Bash', summary: '', isPath: false, isSubagent: false, startedAt: 0, endedAt: null, outcome: 'running' as const }
     const ended = endTurn(addCall(startTurn('t', 'p', 0), call), 5_000)
     expect(ended.calls[0]).toMatchObject({ outcome: 'error', endedAt: 5_000 })
     expect(ended.endedAt).toBe(5_000)
@@ -172,7 +202,7 @@ describe('the timeline state', () => {
 
   test('finishes one call without touching the others', () => {
     const base = startTurn('t', 'p', 0)
-    const one = { id: 'a', tool: 'Read', summary: '', isSubagent: false, startedAt: 0, endedAt: null, outcome: 'running' as const }
+    const one = { id: 'a', tool: 'Read', summary: '', isPath: false, isSubagent: false, startedAt: 0, endedAt: null, outcome: 'running' as const }
     const two = { ...one, id: 'b' }
     const done = finishCall(addCall(addCall(base, one), two), 'a', 'ok', 10)
     expect(done.calls.map(call => call.outcome)).toEqual(['ok', 'running'])
@@ -182,7 +212,7 @@ describe('the timeline state', () => {
     expect(outcomeOf({ deny: 'no' })).toBe('denied')
     expect(outcomeOf({ isError: true })).toBe('error')
     expect(outcomeOf({})).toBe('ok')
-    const calls = ['Bash', 'Edit', 'Bash'].map((tool, i) => ({ id: String(i), tool, summary: '', isSubagent: false, startedAt: 0, endedAt: 0, outcome: 'ok' as const }))
+    const calls = ['Bash', 'Edit', 'Bash'].map((tool, i) => ({ id: String(i), tool, summary: '', isPath: false, isSubagent: false, startedAt: 0, endedAt: 0, outcome: 'ok' as const }))
     expect(toolCounts(calls)).toEqual([['Bash', 2], ['Edit', 1]])
   })
 })

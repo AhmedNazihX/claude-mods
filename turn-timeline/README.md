@@ -5,11 +5,11 @@ A live side pane listing every tool call of the current reply: what ran, when, h
 ```
 ◌ running 6 calls · 1m 12s
 “fix the failing test”
-✓  +0:00    0.3s Read       band.tsx
+✓  +0:00    0.3s Read       hooks/band.tsx
 ✓  +0:01     42s Bash       Run the tests
 ✗  +0:43    1.2s WebFetch   docs.anthropic.com
 ⊘  +0:45    0.0s Write      x.ts
-✓  +0:46    0.4s ↳Read      format.ts
+✓  +0:46    0.4s ↳Read      ~/notes/format.ts
 ◌  +0:47      9s Bash       npm run lint
 Read 2 · Bash 2 · WebFetch 1 · Write 1
 ```
@@ -22,6 +22,7 @@ Read 2 · Bash 2 · WebFetch 1 · Write 1
 | `+0:43` | when the call started, counted from your message |
 | `42s` | how long it took; yellow from 30s, red from 2 minutes. Running calls count up live |
 | `↳Read` | a call made by a subagent |
+| `hooks/band.tsx` | for file tools, the path: from the project folder, `~/…` elsewhere in your home folder, otherwise in full. A long path is cut from the left (`…/hooks/band.tsx`) so the file name stays |
 | last line | how many calls each tool made |
 
 The header shows whether the reply is still running, its number of calls and its total time, with your message under it. The last reply stays on screen until you send the next one. In a short pane the oldest calls scroll off (`… 4 earlier`).

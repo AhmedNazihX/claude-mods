@@ -1,7 +1,7 @@
 import type { ElementTable } from 'claude-code'
 
 import type { TimelineCall, TimelineTurn } from '../types'
-import { OUTCOME_MARKS, durationTone, fit, formatDuration, formatOffset } from './format'
+import { OUTCOME_MARKS, durationTone, fit, fitStart, formatDuration, formatOffset } from './format'
 import { toolLabel } from './summary'
 import { toolCounts } from './timeline'
 
@@ -36,7 +36,7 @@ const renderCall = ({ Box, Text }: Elements, call: TimelineCall, turn: TimelineT
       <Text bold={!call.isSubagent} dimColor={call.isSubagent}>
         {`${fit(label, TOOL_COLUMN).padEnd(TOOL_COLUMN)} `}
       </Text>
-      <Text dimColor>{fit(call.summary, summaryWidth)}</Text>
+      <Text dimColor>{call.isPath ? fitStart(call.summary, summaryWidth) : fit(call.summary, summaryWidth)}</Text>
     </Box>
   )
 }

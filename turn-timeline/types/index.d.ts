@@ -4,6 +4,7 @@ export type TimelineCall = {
   id: string
   tool: string
   summary: string
+  isPath: boolean
   isSubagent: boolean
   startedAt: number
   endedAt: number | null

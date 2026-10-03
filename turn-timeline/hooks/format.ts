@@ -42,3 +42,7 @@ export const OUTCOME_MARKS: Readonly<Record<CallOutcome, { mark: string; tone: T
 /** Cuts `text` to `width` characters, marking the cut with an ellipsis. */
 export const fit = (text: string, width: number): string =>
   width <= 0 ? '' : text.length <= width ? text : `${text.slice(0, Math.max(width - 1, 0))}…`
+
+/** Cuts `text` to `width` from the left, so a path keeps its file name: `…/hooks/band.tsx`. */
+export const fitStart = (text: string, width: number): string =>
+  width <= 0 ? '' : text.length <= width ? text : `…${text.slice(text.length - Math.max(width - 1, 0))}`

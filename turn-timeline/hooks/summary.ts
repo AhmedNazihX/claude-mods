@@ -5,7 +5,21 @@ const stringField = (input: Readonly<Record<string, unknown>>, key: string): str
   return typeof value === 'string' && value.trim() !== '' ? value : undefined
 }
 
-const baseName = (path: string): string => path.split('/').filter(Boolean).pop() ?? path
+/** Where paths are shown from: the session's folder, and the home folder for `~`. */
+export type Places = { cwd: string; home: string }
+
+const FILE_TOOLS = new Set(['Read', 'Write', 'Edit', 'NotebookEdit'])
+
+/**
+ * A path as the pane shows it: relative to the session's folder when inside
+ * it, `~/…` when elsewhere in the home folder, otherwise in full.
+ */
+export const displayPath = (path: string, places: Places): string => {
+  const inside = (root: string) => root !== '' && path.startsWith(`${root.replace(/\/$/, '')}/`)
+  if (inside(places.cwd)) return path.slice(places.cwd.replace(/\/$/, '').length + 1)
+  if (inside(places.home)) return `~/${path.slice(places.home.replace(/\/$/, '').length + 1)}`
+  return path
+}
 
 // Control characters (ESC and kin) would reach the terminal as escape
 // sequences; the pane shows command text, so they are dropped first.
@@ -23,24 +37,29 @@ const hostOf = (url: string): string => {
   return match?.[1] ?? url
 }
 
+export type Summary = { text: string; isPath: boolean }
+
 /**
  * A few words saying what a tool call does, from its arguments: the command
- * a Bash call runs, the file an Edit touches, the pattern a Grep looks for.
- * An unknown tool falls back to its first string argument.
+ * a Bash call runs, the path of the file an Edit touches, the pattern a
+ * search looks for. An unknown tool falls back to its first string argument.
  */
-export const summarize = (tool: string, input: Readonly<Record<string, unknown>>): string => {
+export const summarize = (
+  tool: string,
+  input: Readonly<Record<string, unknown>>,
+  places: Places = { cwd: '', home: '' },
+): Summary => {
   const pick = (...keys: string[]) => keys.map(key => stringField(input, key)).find(Boolean)
   const path = pick('file_path', 'notebook_path', 'path')
+
+  if (FILE_TOOLS.has(tool)) {
+    return { text: path === undefined ? '' : oneLine(displayPath(path, places)), isPath: path !== undefined }
+  }
 
   const summary = (() => {
     switch (tool) {
       case 'Bash':
         return pick('description', 'command') ?? ''
-      case 'Read':
-      case 'Write':
-      case 'Edit':
-      case 'NotebookEdit':
-        return path === undefined ? '' : baseName(path)
       case 'Grep':
       case 'Glob':
         return pick('pattern') ?? ''
@@ -58,7 +77,7 @@ export const summarize = (tool: string, input: Readonly<Record<string, unknown>>
     }
   })()
 
-  return oneLine(summary).slice(0, MAX_SUMMARY_CHARS)
+  return { text: oneLine(summary).slice(0, MAX_SUMMARY_CHARS), isPath: false }
 }
 
 /** `mcp__plugin_playwright_playwright__browser_click` reads as `playwright·browser_click`. */

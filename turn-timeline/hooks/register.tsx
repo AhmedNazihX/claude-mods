@@ -6,6 +6,7 @@ import { renderPane } from './pane'
 import { toSettings } from './settings'
 import type { Settings } from './settings'
 import { summarize } from './summary'
+import type { Places } from './summary'
 import { addCall, endTurn, finishCall, outcomeOf, startTurn } from './timeline'
 
 const PANE = 'turn-timeline'
@@ -22,6 +23,8 @@ const now = atom({ plugin: 'turn-timeline', key: 'now' } as const, 0)
 let ticker: Timer | undefined
 // Calls without a tool_use_id still need an id of their own.
 let callCount = 0
+// Where file paths are shown from, read when the session starts.
+let places: Places = { cwd: '', home: '' }
 
 function stopTicker() {
   ticker?.cancel()
@@ -40,6 +43,17 @@ function startTicker($: EngineInterface) {
 
 // Asks for a modest size: the width it docks at beside the conversation, the
 // height it takes above the prompt. A size the person dragged it to wins.
+// The home folder, for `~/…` paths. Reading it must never stop the pane
+// from opening: without it, paths outside the project show in full.
+async function readHome($: EngineInterface): Promise<string> {
+  try {
+    return (await $.env.get('HOME')) ?? ''
+  } catch (error) {
+    $.ui.log(`turn-timeline could not read HOME: ${error}`, { to: 'debug' })
+    return ''
+  }
+}
+
 function openPane($: EngineInterface, settings: Settings) {
   $.ui.open({ id: PANE, title: PANE_TITLE, columns: settings.columns, rows: settings.rows }).catch(error =>
     $.ui.log(`turn-timeline could not open its pane: ${error}`, { to: 'debug' }),
@@ -50,6 +64,7 @@ export const register: Register = (on, options) => {
   const settings = toSettings(options)
 
   on('session.start', async ($, e, next) => {
+    places = { cwd: e.cwd, home: await readHome($) }
     await $.command.register({
       name: COMMAND,
       description: 'Show the tool calls of the current reply in a side pane',
@@ -78,10 +93,12 @@ export const register: Register = (on, options) => {
 
     callCount += 1
     const startedAt = await $.clock.now()
+    const summary = summarize(e.tool, e as unknown as Readonly<Record<string, unknown>>, places)
     const call: TimelineCall = {
       id: e.tool_use_id ?? `${e.tool}-${startedAt}-${callCount}`,
       tool: e.tool,
-      summary: summarize(e.tool, e as unknown as Readonly<Record<string, unknown>>),
+      summary: summary.text,
+      isPath: summary.isPath,
       isSubagent: e.agentId !== undefined,
       startedAt,
       endedAt: null,
