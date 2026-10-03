@@ -1,14 +1,19 @@
 {
   "name": "secret-guard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Stops Claude from writing API keys, private keys and other secrets into your files",
-  "author": { "name": "Ahmed" },
+  "author": {
+    "name": "Ahmed"
+  },
   "userConfig": {
     "mode": {
       "type": "string",
       "title": "When a secret is found",
       "description": "block: refuse the edit and tell Claude why; warn: let it through with a warning",
-      "options": ["block", "warn"],
+      "options": [
+        "block",
+        "warn"
+      ],
       "default": "block"
     }
   }

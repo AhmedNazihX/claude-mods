@@ -7,7 +7,16 @@ const stringField = (input: Readonly<Record<string, unknown>>, key: string): str
 
 const baseName = (path: string): string => path.split('/').filter(Boolean).pop() ?? path
 
-const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim()
+// Control characters (ESC and kin) would reach the terminal as escape
+// sequences; the pane shows command text, so they are dropped first.
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g
+
+/** One printable line: control characters removed, whitespace collapsed. */
+export const printable = (text: string): string =>
+  text.replace(CONTROL_CHARS, '').replace(/\s+/g, ' ').trim()
+
+const oneLine = printable
 
 const hostOf = (url: string): string => {
   const match = /^[a-z]+:\/\/([^/?#]+)/i.exec(url)

@@ -1,6 +1,6 @@
 {
   "name": "turn-timeline",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A live side pane listing every tool call of the current reply, with when it started, how long it took and how it ended",
   "author": {
     "name": "Ahmed"

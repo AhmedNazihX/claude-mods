@@ -1,11 +1,12 @@
 import type { CallOutcome, TimelineCall, TimelineTurn } from '../types'
+import { printable } from './summary'
 
 const MAX_CALLS = 500
 const MAX_PROMPT_CHARS = 80
 
 export const startTurn = (id: string, prompt: string, now: number): TimelineTurn => ({
   id,
-  prompt: prompt.replace(/\s+/g, ' ').trim().slice(0, MAX_PROMPT_CHARS),
+  prompt: printable(prompt).slice(0, MAX_PROMPT_CHARS),
   startedAt: now,
   endedAt: null,
   calls: [],

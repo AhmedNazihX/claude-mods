@@ -16,8 +16,13 @@ function verdictFor(path: string, text: string): string | undefined {
   return findings.length === 0 ? undefined : describeFindings(path, findings)
 }
 
+// A file name could carry control characters (ESC sequences) that would
+// reach the terminal through the toast; they are dropped first.
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g
+
 function report($: EngineInterface, mode: Mode, path: string, reason: string) {
-  const fileName = path.split('/').pop() ?? path
+  const fileName = (path.split('/').pop() ?? path).replace(CONTROL_CHARS, '')
   $.ui.toast(
     mode === 'block'
       ? `🔒 Blocked a secret from being written to ${fileName}`

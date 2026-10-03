@@ -4,7 +4,7 @@ import type { On } from 'claude-code'
 
 import { fit, formatDuration, formatOffset } from './format'
 import { toSettings } from './settings'
-import { summarize, toolLabel } from './summary'
+import { printable, summarize, toolLabel } from './summary'
 import { addCall, endTurn, finishCall, outcomeOf, startTurn, toolCounts } from './timeline'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -105,6 +105,14 @@ describe('summaries', () => {
     expect(summarize('WebFetch', { url: 'https://docs.anthropic.com/en/x' })).toBe('docs.anthropic.com')
     expect(summarize('Agent', { description: 'Survey work', prompt: '…' })).toBe('Survey work')
     expect(summarize('Mystery', { count: 3, note: 'hello' })).toBe('hello')
+  })
+
+  test('drop terminal escape sequences and other control characters', () => {
+    const esc = String.fromCharCode(27)
+    const bell = String.fromCharCode(7)
+    expect(summarize('Bash', { command: `echo ${esc}[2J${esc}]0;pwned${bell}hi` })).toBe('echo [2J]0;pwnedhi')
+    expect(printable(`a${esc}[31mb\tc`)).toBe('a[31mb c')
+    expect(startTurn('t', `fix ${esc}[1mthis`, 0).prompt).toBe('fix [1mthis')
   })
 
   test('shorten MCP tool names', () => {

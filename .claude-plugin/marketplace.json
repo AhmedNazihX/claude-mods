@@ -15,7 +15,7 @@
       "name": "secret-guard",
       "source": "./secret-guard",
       "description": "Stops Claude from writing API keys, private keys and other secrets into your files",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
     {
       "name": "done-chime",
@@ -27,7 +27,7 @@
       "name": "turn-timeline",
       "source": "./turn-timeline",
       "description": "Live side pane listing each tool call of the current reply with timings and outcomes",
-      "version": "0.1.0"
+      "version": "0.1.1"
     }
   ]
 }
