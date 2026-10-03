@@ -9,6 +9,7 @@ import { rewriteSearch } from './rewrite'
  */
 export const register: Register = on => {
   on('tool.call', { tool: 'Bash' }, ($, e, next) => {
+    if (typeof e.command !== 'string') return next(e)
     const rewrite = rewriteSearch(e.command)
     if (rewrite === null) return next(e)
 

@@ -18,6 +18,8 @@ const ASKS_FOR_ENV = /--include(=|[ \t]+)['"]?[^ \t'"]*env|(-g|--glob|--iglob)(=
 const UNREADABLE = /[\n\r`]|\$\(|<<|(^|[^A-Za-z0-9_-])eval([ \t]|$)/
 
 const GREP_WORDS = /(^|[^A-Za-z0-9_-])([ef]?grep)(?=[ \t])/g
+// Every "grep" in the command, flaggable or not (rgrep, ggrep, zgrep, …).
+const ANY_GREP = /grep/g
 const RG_WORDS = /(^|[^A-Za-z0-9_-])(rg)(?=[ \t])/g
 
 export const GREP_EXCLUDE = "--exclude='.env*'"
@@ -74,6 +76,10 @@ export const rewriteSearch = (command: string): Rewrite | null => {
   const isRgBlocked = HIDDEN_RG.test(command) && !RG_NEGATIVE_GLOB.test(command)
   if (!isGrepBlocked && !isRgBlocked) return null
   if (ASKS_FOR_ENV.test(command) || UNREADABLE.test(command)) return null
+
+  // A grep-family word this can't flag (rgrep, ggrep, zgrep …) would be left
+  // reading .env while a plain grep's flag satisfied the guard.
+  if ([...command.matchAll(ANY_GREP)].length !== [...command.matchAll(GREP_WORDS)].length) return null
 
   const quoted = quotedPositions(command)
   if (!isEveryWordUnquoted(command, GREP_WORDS, quoted) || !isEveryWordUnquoted(command, RG_WORDS, quoted)) return null

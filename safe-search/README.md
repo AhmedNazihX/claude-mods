@@ -25,6 +25,7 @@ Only when the guard would block it, using the same rules:
 |---|---|
 | a search word inside quotes, e.g. `sh -c 'grep -r …'` | the flag's own quotes would end the user's, and the shell would turn `.env*` into file names that grep then reads |
 | a search that asks for env files, e.g. `--include='.env*'`, `rg -g '.env'` | the later flag would override the exclude |
+| another grep-family command, e.g. `rgrep`, `ggrep`, `zgrep` | it can't be flagged, and would read `.env` while a plain grep's flag satisfied the guard |
 | more than one line (heredocs, `\` continuations), `$(…)`, backticks, `eval` | the shell may read these differently from a pattern match |
 
 When it does change a command, every `grep` word gets the exclude and every `rg` the glob, not only the recursive ones, so no search in a chain is missed. Each change is noted in the debug log (`claude --debug`).

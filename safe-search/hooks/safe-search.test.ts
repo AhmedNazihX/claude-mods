@@ -83,6 +83,15 @@ describe('commands it cannot read with certainty', () => {
     expect(rewriteSearch('eval grep -rn x .')).toBeNull()
   })
 
+  // Found by a security review: only plain grep words got the flag, so an
+  // rgrep or ggrep in the same command read .env past the guard.
+  test('a grep-family word it cannot flag leaves the command to the guard', () => {
+    expect(rewriteSearch('rgrep KEY . ; grep -r x src')).toBeNull()
+    expect(rewriteSearch('ggrep -r KEY . ; grep -rn x src')).toBeNull()
+    expect(rewriteSearch('zgrep -r KEY . && grep -r y lib')).toBeNull()
+    expect(rewriteSearch('grep -rn x src')?.command).toBe(`grep ${GREP_EXCLUDE} -rn x src`)
+  })
+
   test('quotes around arguments are fine', () => {
     expect(rewriteSearch('grep -rn "use effect" src')?.command).toBe(`grep ${GREP_EXCLUDE} -rn "use effect" src`)
   })
