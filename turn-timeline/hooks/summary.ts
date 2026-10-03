@@ -1,0 +1,61 @@
+const MAX_SUMMARY_CHARS = 120
+
+const stringField = (input: Readonly<Record<string, unknown>>, key: string): string | undefined => {
+  const value = input[key]
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined
+}
+
+const baseName = (path: string): string => path.split('/').filter(Boolean).pop() ?? path
+
+const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim()
+
+const hostOf = (url: string): string => {
+  const match = /^[a-z]+:\/\/([^/?#]+)/i.exec(url)
+  return match?.[1] ?? url
+}
+
+/**
+ * A few words saying what a tool call does, from its arguments: the command
+ * a Bash call runs, the file an Edit touches, the pattern a Grep looks for.
+ * An unknown tool falls back to its first string argument.
+ */
+export const summarize = (tool: string, input: Readonly<Record<string, unknown>>): string => {
+  const pick = (...keys: string[]) => keys.map(key => stringField(input, key)).find(Boolean)
+  const path = pick('file_path', 'notebook_path', 'path')
+
+  const summary = (() => {
+    switch (tool) {
+      case 'Bash':
+        return pick('description', 'command') ?? ''
+      case 'Read':
+      case 'Write':
+      case 'Edit':
+      case 'NotebookEdit':
+        return path === undefined ? '' : baseName(path)
+      case 'Grep':
+      case 'Glob':
+        return pick('pattern') ?? ''
+      case 'Agent':
+      case 'Task':
+        return pick('description', 'subagent_type') ?? ''
+      case 'Skill':
+        return pick('skill') ?? ''
+      case 'WebFetch':
+        return hostOf(pick('url') ?? '')
+      case 'WebSearch':
+        return pick('query') ?? ''
+      default:
+        return Object.values(input).find((value): value is string => typeof value === 'string') ?? ''
+    }
+  })()
+
+  return oneLine(summary).slice(0, MAX_SUMMARY_CHARS)
+}
+
+/** `mcp__plugin_playwright_playwright__browser_click` reads as `playwright·browser_click`. */
+export const toolLabel = (tool: string): string => {
+  if (!tool.startsWith('mcp__')) return tool
+  const [, server = '', ...rest] = tool.split('__')
+  const name = server.replace(/^plugin_/, '').split('_').pop() ?? server
+  return `${name}·${rest.join('__')}`
+}

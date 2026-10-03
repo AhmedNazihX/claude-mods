@@ -1,0 +1,29 @@
+{
+  "name": "turn-timeline",
+  "version": "0.1.0",
+  "description": "A live side pane listing every tool call of the current reply, with when it started, how long it took and how it ended",
+  "author": {
+    "name": "Ahmed"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "autoOpen": {
+      "type": "boolean",
+      "title": "Open at session start",
+      "description": "Open the pane when a session starts (it docks once the window is wide enough); off, open it with /timeline",
+      "default": true
+    },
+    "paneColumns": {
+      "type": "number",
+      "title": "Pane width (columns)",
+      "description": "How wide the pane opens when docked beside the conversation (30 to 120); a width you drag it to wins",
+      "default": 60
+    },
+    "paneRows": {
+      "type": "number",
+      "title": "Pane height (rows)",
+      "description": "How tall the pane opens when shown above the prompt (5 to 40); a height you drag it to wins",
+      "default": 12
+    }
+  }
+}
