@@ -19,15 +19,19 @@ Only when the guard would block it, using the same rules:
 - `grep`, `egrep` or `fgrep` with `-r`, `-R` or `--recursive`, and no `--exclude` mentioning `env` (an `--include` that doesn't select `.env` already makes it safe)
 - `rg` with `-u`, `--hidden` or `--no-ignore`, and no `-g '!…'`
 
-When a command needs it, every `grep` word in it gets the exclude (and every `rg` the glob), not only the recursive ones: splitting a command into parts can go wrong around a quoted `|` or `;`, and one unprotected search is all it would take to read `.env`. As a last check, a rewrite that doesn't reach every search word is dropped, and the guard blocks the command as before.
+…and only when it can read the command with certainty. These are left unchanged, so the guard blocks them as before:
 
-Everything else runs unchanged. Heredoc bodies (text being written to a file) are never touched. Each change is noted in the debug log (`claude --debug`).
+| Left to the guard | Why |
+|---|---|
+| a search word inside quotes, e.g. `sh -c 'grep -r …'` | the flag's own quotes would end the user's, and the shell would turn `.env*` into file names that grep then reads |
+| a search that asks for env files, e.g. `--include='.env*'`, `rg -g '.env'` | the later flag would override the exclude |
+| more than one line (heredocs, `\` continuations), `$(…)`, backticks, `eval` | the shell may read these differently from a pattern match |
 
-A search that asks for env files by name (`--include='.env*'`, or an rg glob like `-g '.env'`) is never rewritten: the later flag would override the exclude, so the guard blocks it as before.
-
-**Limit:** `grep -R` follows symlinks, and the exclude matches file *names*. A symlink with another name pointing at a `.env` file would still be read. The guard has the same gap.
+When it does change a command, every `grep` word gets the exclude and every `rg` the glob, not only the recursive ones, so no search in a chain is missed. Each change is noted in the debug log (`claude --debug`).
 
 It only ever *adds* an exclusion: a command can read less after the change, never more.
+
+**Limit:** `grep -R` follows symlinks, and the exclude matches file *names*. A symlink with another name pointing at a `.env` file would still be read. The guard has the same gap.
 
 ## Development
 

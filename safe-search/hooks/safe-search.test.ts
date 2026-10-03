@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { GREP_EXCLUDE, RG_EXCLUDE, markHeredocs, rewriteSearch } from './rewrite'
+import { GREP_EXCLUDE, RG_EXCLUDE, quotedPositions, rewriteSearch } from './rewrite'
 
 const rewritten = (command: string) => rewriteSearch(command)?.command ?? null
 
@@ -66,19 +66,32 @@ describe('rg', () => {
   })
 })
 
-describe('heredocs', () => {
-  test('a heredoc body is file content and is never changed', () => {
-    const command = 'cat > notes.md <<EOF\nrun grep -rn x . to find it\nEOF\ngrep -rn y src'
-    expect(rewritten(command)).toBe(`cat > notes.md <<EOF\nrun grep -rn x . to find it\nEOF\ngrep ${GREP_EXCLUDE} -rn y src`)
+describe('commands it cannot read with certainty', () => {
+  // Found by a security review: inside quotes, the inserted flag's quotes
+  // end the user's, and the shell expands .env* into files grep then reads.
+  test('a search word inside quotes is left to the guard', () => {
+    expect(rewriteSearch("sh -c 'grep -r KEY .'")).toBeNull()
+    expect(rewriteSearch('bash -c "grep -rn KEY ."')).toBeNull()
+    expect(rewriteSearch("grep -rn x . && sh -c 'rg --hidden y'")).toBeNull()
   })
 
-  test('a search only inside a heredoc body needs nothing', () => {
-    expect(rewriteSearch("cat > a.sh <<'EOF'\ngrep -rn x .\nEOF")).toBeNull()
+  test('multi-line commands, heredocs, substitution and eval are left alone', () => {
+    expect(rewriteSearch('grep -rn x .\nls')).toBeNull()
+    expect(rewriteSearch('cat > a.md <<EOF\nhi\nEOF\ngrep -rn y src')).toBeNull()
+    expect(rewriteSearch('echo $(grep -rn x .)')).toBeNull()
+    expect(rewriteSearch('echo `grep -rn x .`')).toBeNull()
+    expect(rewriteSearch('eval grep -rn x .')).toBeNull()
   })
 
-  test('<<- ends at a tab-indented terminator; <<< is no heredoc', () => {
-    expect(markHeredocs('cat <<-END\n\tgrep -r x .\n\tEND\nls').map(line => line.isHeredocBody)).toEqual([false, true, true, false])
-    expect(markHeredocs('grep x <<< "$v"\nls').map(line => line.isHeredocBody)).toEqual([false, false])
+  test('quotes around arguments are fine', () => {
+    expect(rewriteSearch('grep -rn "use effect" src')?.command).toBe(`grep ${GREP_EXCLUDE} -rn "use effect" src`)
+  })
+
+  test('quote tracking follows the shell', () => {
+    const marks = (text: string) => quotedPositions(text).map(isQuoted => (isQuoted ? 'q' : '.')).join('')
+    expect(marks(`a 'b' "c"`)).toBe("..qqq.qqq")
+    expect(marks(String.raw`a "x\"y" z`)).toBe('..qqqqqq..')
+    expect(marks(String.raw`a 'x\' b`)).toBe('..qqqq..')
   })
 })
 
