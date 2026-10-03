@@ -10,6 +10,7 @@ Mods for [Claude Code](https://claude.com/claude-code).
 /plugin install secret-guard@ahmed-mods
 /plugin install done-chime@ahmed-mods
 /plugin install turn-timeline@ahmed-mods
+/plugin install safe-search@ahmed-mods
 ```
 
 Update later with `/plugin marketplace update ahmed-mods`.
@@ -22,5 +23,6 @@ Update later with `/plugin marketplace update ahmed-mods`.
 | [secret-guard](./secret-guard) | Blocks Claude from writing API keys and other secrets into your files |
 | [done-chime](./done-chime) | Chime and toast when a long reply finishes |
 | [turn-timeline](./turn-timeline) | Live side pane of each tool call in the current reply, with timings and outcomes |
+| [safe-search](./safe-search) | Adds the dotenv exclude to recursive searches so a secrets guard doesn't block them |
 
 A mod runs inside your Claude Code session; read what one does before you install it.
