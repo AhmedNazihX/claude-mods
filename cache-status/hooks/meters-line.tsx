@@ -60,7 +60,13 @@ export const renderMetersLine = (
     ...view.limits.map((limit, index) => [
       // The plan windows read as one group: `usage 5h … · week …`.
       ...(index === 0 ? [<Text key="usage-label" dimColor>{USAGE_LABEL}</Text>] : []),
-      ...meter(`limit-${limit.label}`, limit.label, limit.percent, limit.level),
+      ...meter(
+        `limit-${limit.label}`,
+        limit.label,
+        limit.percent,
+        limit.level,
+        limit.resetsIn !== null && plan.layout !== 'narrow' ? ` (resets in ${limit.resetsIn})` : '',
+      ),
     ]),
   ]
 

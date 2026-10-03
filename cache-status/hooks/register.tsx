@@ -128,7 +128,7 @@ export const register: Register = (on, options) => {
     await update($, meters, current => ({
       ...current,
       contextPercent: e.context.percent ?? current.contextPercent,
-      rateLimits: e.rateLimits.map(({ kind, percentUsed }) => ({ kind, percentUsed })),
+      rateLimits: e.rateLimits.map(({ kind, percentUsed, resetsAt }) => ({ kind, percentUsed, resetsAt })),
     }))
 
     return next(e)
@@ -147,7 +147,7 @@ export const register: Register = (on, options) => {
 
     return renderBand({ Box: table.Box, Text: table.Text, Svg }, {
       view: toView(snapshot, await read($, now), settings),
-      meters: toMetersView(await read($, meters)),
+      meters: toMetersView(await read($, meters), await read($, now)),
       plan: planLayout(e.props.bodyColumns, settings.barSegments),
       isWorking: e.props.isWorking,
     })

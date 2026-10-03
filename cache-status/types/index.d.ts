@@ -7,7 +7,7 @@ export type CacheSnapshot = {
   sessionUsd: number | null
 }
 
-export type RateLimitReading = { kind: string; percentUsed: number }
+export type RateLimitReading = { kind: string; percentUsed: number; resetsAt?: string }
 
 export type Meters = {
   contextPercent: number | null

@@ -28,9 +28,10 @@ export const metersRow = (view: MetersView, isWorking: boolean): Row | null => {
   ]
   const groups = [
     ...(view.context === null ? [] : [meter('ctx', view.context.percent, view.context.level)]),
-    ...view.limits.map((limit, index) =>
-      meter(index === 0 ? `usage ${limit.label}` : limit.label, limit.percent, limit.level),
-    ),
+    ...view.limits.map((limit, index) => [
+      ...meter(index === 0 ? `usage ${limit.label}` : limit.label, limit.percent, limit.level),
+      ...(limit.resetsIn === null ? [] : [text(` · resets in ${limit.resetsIn}`, 'dim')]),
+    ]),
   ]
   return groups.length === 0 ? null : renderRow(joinGroups(groups), isWorking)
 }

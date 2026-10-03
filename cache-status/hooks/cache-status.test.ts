@@ -12,7 +12,7 @@ import {
   turnCostOf,
 } from './format'
 import { planLayout } from './layout'
-import { compactAtPercentOf, contextLevelOf, limitLabelOf, limitLevelOf } from './meters'
+import { compactAtPercentOf, contextLevelOf, formatResetsIn, limitLabelOf, limitLevelOf } from './meters'
 import { toSettings } from './settings'
 import { tickShades } from './shade'
 import { segmentedBarSvg, segmentedBarWidthPx } from './svg-bar'
@@ -320,6 +320,16 @@ describe('the meters', () => {
     expect(compactAtPercentOf(830_000, 1_000_000)).toBe(83)
     expect(compactAtPercentOf(undefined, 1_000_000)).toBeNull()
     expect(compactAtPercentOf(1, 0)).toBeNull()
+  })
+
+  test('say how long until a window resets', () => {
+    const now = Date.parse('2026-10-03T09:00:00Z')
+    expect(formatResetsIn('2026-10-05T13:00:00Z', now)).toBe('2d 4h')
+    expect(formatResetsIn('2026-10-03T12:20:00Z', now)).toBe('3h 20m')
+    expect(formatResetsIn('2026-10-03T09:45:00Z', now)).toBe('45m')
+    expect(formatResetsIn('2026-10-03T08:00:00Z', now)).toBeNull()
+    expect(formatResetsIn(undefined, now)).toBeNull()
+    expect(formatResetsIn('not a date', now)).toBeNull()
   })
 
   test('name the usage windows briefly', () => {

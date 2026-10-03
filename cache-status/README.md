@@ -3,7 +3,7 @@
 A band above the Claude Code prompt that shows how the prompt cache is doing and what each reply costs.
 
 ```
-ctx ▰▰▰▰▰▰▱▱▱▱ 62% (compacts at 83%) · usage 5h ▰▰▰▰▱▱▱▱▱▱ 41% · week ▰▰▱▱▱▱▱▱▱▱ 18%
+ctx ▰▰▰▰▰▰▱▱▱▱ 62% (compacts at 83%) · usage 5h ▰▰▰▰▱▱▱▱▱▱ 41% (resets in 3h 20m) · week ▰▰▱▱▱▱▱▱▱▱ 18% (resets in 2d 4h)
 ● cache warm · 52m · hit ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱ 94% from cache (120k read, 3k written) · cost $0.08 · session $3.21
 ```
 
@@ -30,7 +30,7 @@ Its colours are tuned for the desktop's dark theme.
 | `cost $0.08` | What the last turn cost: every request it made, tool calls and subagents included. Green, then yellow and red at the thresholds in Settings. |
 | `session $3.21` | The session total, the same figure `/cost` shows. |
 | `ctx 62% (compacts at 83%)` | How full the context window is, and where auto-compact will summarise it. Green, yellow from 75% of the way to that point, red from 90%. |
-| `usage 5h 41%` · `week 18%` | Your plan's usage windows (Pro/Max), as Claude Code reads them. Green, yellow from 60%, red from 85%. Not shown on API-key billing. |
+| `usage 5h 41%` · `week 18%` | Your plan's usage windows (Pro/Max), as Claude Code reads them. Green, yellow from 60%, red from 85%. After each, how long until it resets. Not shown on API-key billing. |
 
 Costs come from Claude Code's own ledger, at list prices (or your organization's configured pricing). On a subscription they show what the usage would cost on the API, not what you are charged.
 

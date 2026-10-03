@@ -13,7 +13,7 @@ const LIMIT_LABELS: Readonly<Record<string, string>> = {
   spend_limit: 'spend',
 }
 
-export type LimitView = { label: string; percent: number; level: Level }
+export type LimitView = { label: string; percent: number; level: Level; resetsIn: string | null }
 
 export type MetersView = {
   context: { percent: number; compactAt: number | null; level: Level } | null
@@ -51,7 +51,24 @@ export const compactAtPercentOf = (
     ? null
     : Math.round((threshold / window) * FULL_PERCENT)
 
-export const toMetersView = (meters: Meters): MetersView => ({
+const MS_PER_MINUTE = 60 * 1000
+const MINUTES_PER_HOUR = 60
+const HOURS_PER_DAY = 24
+
+/** `2d 4h`, `3h 20m`, `45m`: how long until `resetsAt`, or null when unknown or past. */
+export const formatResetsIn = (resetsAt: string | undefined, now: number): string | null => {
+  if (resetsAt === undefined) return null
+  const at = Date.parse(resetsAt)
+  if (!Number.isFinite(at) || at <= now) return null
+  const minutes = Math.ceil((at - now) / MS_PER_MINUTE)
+  const hours = Math.floor(minutes / MINUTES_PER_HOUR)
+  const days = Math.floor(hours / HOURS_PER_DAY)
+  if (days > 0) return `${days}d ${hours % HOURS_PER_DAY}h`
+  if (hours > 0) return `${hours}h ${minutes % MINUTES_PER_HOUR}m`
+  return `${minutes}m`
+}
+
+export const toMetersView = (meters: Meters, now = 0): MetersView => ({
   context:
     meters.contextPercent === null
       ? null
@@ -64,6 +81,7 @@ export const toMetersView = (meters: Meters): MetersView => ({
     label: limitLabelOf(limit.kind),
     percent: limit.percentUsed,
     level: limitLevelOf(limit.percentUsed),
+    resetsIn: formatResetsIn(limit.resetsAt, now),
   })),
 })
 
