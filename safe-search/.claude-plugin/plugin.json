@@ -1,6 +1,8 @@
 {
   "name": "safe-search",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Adds --exclude='.env*' to recursive greps (and -g '!.env*' to hidden rg searches) before they run, so a secrets guard has nothing to block",
-  "author": { "name": "Ahmed" }
+  "author": {
+    "name": "Ahmed"
+  }
 }

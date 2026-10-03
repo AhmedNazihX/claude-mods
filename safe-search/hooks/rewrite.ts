@@ -8,17 +8,15 @@ const INCLUDES_ENV = /--include(=|\s+)['"]?[^\s]*env/
 const HIDDEN_RG = /(^|[^A-Za-z0-9_-])rg\s([^;&|]*\s)?(-[A-Za-z]*u[A-Za-z]*|--hidden|--no-ignore[A-Za-z-]*)(\s|$)/
 const RG_NEGATIVE_GLOB = /(-g|--glob)\s+['"]?!/
 
-// The command word itself, so the flag lands right after it.
-const GREP_WORD = /(^|[^A-Za-z0-9_-])([ef]?grep)(?=\s)/
-const RG_WORD = /(^|[^A-Za-z0-9_-])(rg)(?=\s)/
+// Every command word, so the flag lands right after each one.
+const GREP_WORDS = /(^|[^A-Za-z0-9_-])([ef]?grep)(?=\s)/g
+const RG_WORDS = /(^|[^A-Za-z0-9_-])(rg)(?=\s)/g
 
 export const GREP_EXCLUDE = "--exclude='.env*'"
 export const RG_EXCLUDE = "-g '!.env*'"
 
 // A heredoc opener: `cat > f <<EOF`, `<<-'EOF'`; not a here-string (`<<<`).
 const HEREDOC_OPENER = /(^|[^<])<<(-?)[ \t]*["']?([A-Za-z_][A-Za-z0-9_]*)["']?/
-// Splits a line into command segments, keeping the separators.
-const SEPARATORS = /(&&|\|\||;|\|)/
 
 type Line = { text: string; isHeredocBody: boolean }
 
@@ -47,25 +45,29 @@ export const markHeredocs = (command: string): Line[] => {
   return marked.out
 }
 
-const insertAfter = (segment: string, word: RegExp, flag: string): string =>
-  segment.replace(word, (_match, before: string, name: string) => `${before}${name} ${flag}`)
+const insertAfterEach = (text: string, words: RegExp, flag: string): string =>
+  text.replace(words, (_match, before: string, name: string) => `${before}${name} ${flag}`)
 
-const rewriteSegment = (segment: string, needs: { grep: boolean; rg: boolean }): string => {
-  const withGrep =
-    needs.grep && RECURSIVE_GREP.test(segment) && !EXCLUDES_ENV.test(segment)
-      ? insertAfter(segment, GREP_WORD, GREP_EXCLUDE)
-      : segment
-  return needs.rg && HIDDEN_RG.test(withGrep) && !RG_NEGATIVE_GLOB.test(withGrep)
-    ? insertAfter(withGrep, RG_WORD, RG_EXCLUDE)
-    : withGrep
+// Every occurrence of the word, and how many already carry the flag after it.
+const isEveryWordFlagged = (text: string, words: RegExp, flag: string): boolean => {
+  const all = [...text.matchAll(words)].length
+  const flagged = text.split(flag).length - 1
+  return flagged >= all
 }
 
 export type Rewrite = { command: string; added: string[] }
 
 /**
- * `command` with `--exclude='.env*'` added to each recursive grep, and
- * `-g '!.env*'` to each hidden or no-ignore rg, where the secrets hook would
- * otherwise block it; null when it would not block, so nothing changes.
+ * `command` with `--exclude='.env*'` after every grep word and `-g '!.env*'`
+ * after every rg word, when the secrets hook would otherwise block it; null
+ * when it would not block, so nothing changes.
+ *
+ * The flag goes after each word, not only the ones that look recursive: a
+ * command is not split into parts here, because a quoted `|` or `;` would
+ * split it wrongly and leave one recursive search unprotected while another
+ * one's flag satisfied the hook. Narrowing a search that did not need it
+ * costs nothing; missing one would leak .env. As a last check, a rewrite
+ * that does not reach every word is dropped, and the hook blocks as before.
  */
 export const rewriteSearch = (command: string): Rewrite | null => {
   const lines = markHeredocs(command)
@@ -78,19 +80,21 @@ export const rewriteSearch = (command: string): Rewrite | null => {
   const isRgBlocked = HIDDEN_RG.test(checked) && !RG_NEGATIVE_GLOB.test(checked)
   if (!isGrepBlocked && !isRgBlocked) return null
 
-  const needs = { grep: isGrepBlocked, rg: isRgBlocked }
-  const rewritten = lines
-    .map(line =>
-      line.isHeredocBody
-        ? line.text
-        : line.text
-            .split(SEPARATORS)
-            .map(part => (SEPARATORS.test(part) && part.length <= 2 ? part : rewriteSegment(part, needs)))
-            .join(''),
-    )
-    .join('\n')
+  const fix = (text: string): string => {
+    const withGrep = isGrepBlocked ? insertAfterEach(text, GREP_WORDS, GREP_EXCLUDE) : text
+    return isRgBlocked ? insertAfterEach(withGrep, RG_WORDS, RG_EXCLUDE) : withGrep
+  }
+  const rewrittenLines = lines.map(line => (line.isHeredocBody ? line : { ...line, text: fix(line.text) }))
+  const rewritten = rewrittenLines.map(line => line.text).join('\n')
+  const rewrittenChecked = rewrittenLines.filter(line => !line.isHeredocBody).map(line => line.text).join('\n')
 
-  return rewritten === command
-    ? null
-    : { command: rewritten, added: [...(isGrepBlocked ? [GREP_EXCLUDE] : []), ...(isRgBlocked ? [RG_EXCLUDE] : [])] }
+  const isComplete =
+    (!isGrepBlocked || isEveryWordFlagged(rewrittenChecked, GREP_WORDS, GREP_EXCLUDE)) &&
+    (!isRgBlocked || isEveryWordFlagged(rewrittenChecked, RG_WORDS, RG_EXCLUDE))
+  if (!isComplete || rewritten === command) return null
+
+  return {
+    command: rewritten,
+    added: [...(isGrepBlocked ? [GREP_EXCLUDE] : []), ...(isRgBlocked ? [RG_EXCLUDE] : [])],
+  }
 }

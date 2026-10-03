@@ -11,9 +11,9 @@ describe('recursive grep', () => {
     expect(rewritten('git status && grep --recursive needle docs')).toBe(`git status && grep ${GREP_EXCLUDE} --recursive needle docs`)
   })
 
-  test('fixes every recursive grep in a chain, and only those', () => {
+  test('fixes every grep in a blocked command, so none is left reading .env', () => {
     expect(rewritten('grep -rn foo . ; grep -n bar file.ts ; grep -rl baz lib')).toBe(
-      `grep ${GREP_EXCLUDE} -rn foo . ; grep -n bar file.ts ; grep ${GREP_EXCLUDE} -rl baz lib`,
+      `grep ${GREP_EXCLUDE} -rn foo . ; grep ${GREP_EXCLUDE} -n bar file.ts ; grep ${GREP_EXCLUDE} -rl baz lib`,
     )
     expect(rewritten('cd app && grep -rl x src | head -5')).toBe(`cd app && grep ${GREP_EXCLUDE} -rl x src | head -5`)
   })
@@ -27,6 +27,20 @@ describe('recursive grep', () => {
 
   test('still fixes a search whose --include selects .env', () => {
     expect(rewritten('grep -rn --include=".env*" KEY .')).toBe(`grep ${GREP_EXCLUDE} -rn --include=".env*" KEY .`)
+  })
+})
+
+describe('a quoted separator', () => {
+  // Found by a security review: splitting on a quoted | left the first,
+  // recursive grep without the flag while the second one's flag let the
+  // whole command past the hook.
+  test('cannot leave a recursive grep unprotected', () => {
+    expect(rewritten("grep -e 'a|b' -r . ; grep -rn z .")).toBe(
+      `grep ${GREP_EXCLUDE} -e 'a|b' -r . ; grep ${GREP_EXCLUDE} -rn z .`,
+    )
+    expect(rewritten("grep -rn 'x;y' . && grep -rn z lib")).toBe(
+      `grep ${GREP_EXCLUDE} -rn 'x;y' . && grep ${GREP_EXCLUDE} -rn z lib`,
+    )
   })
 })
 
