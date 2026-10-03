@@ -5,7 +5,8 @@ import type { LayoutPlan } from './layout'
 import { hasMeters } from './meters'
 import type { MetersView } from './meters'
 import { renderMetersLine } from './meters-line'
-import { renderDesktopCacheLine } from './desktop-line'
+import { cacheRow, metersRow } from './desktop-rows'
+import type { Row } from './svg-row'
 import { renderBar } from './ticks'
 import type { BarElements } from './ticks'
 
@@ -73,30 +74,35 @@ const renderCacheLine = (elements: Elements, input: BandInput) => {
   )
 }
 
+const renderRowSvg = (Svg: NonNullable<Elements['Svg']>, key: string, row: Row) => (
+  <Svg key={key} source={row.source} alt={row.alt} width={row.width} height={row.height} />
+)
+
 /**
  * The band: the meters line (context fill, plan usage) once there are
  * figures, and under it, next to the prompt, the cache line (countdown,
- * hit-rate bar, the turn's cost).
- * While a reply runs both dim, their numbers being the last turn's.
+ * hit-rate bar, the turn's cost). The desktop, whose Text no prop can size,
+ * gets each line drawn whole as a small SVG; every other surface gets text.
  */
 export const renderBand = (elements: Elements, input: BandInput) => {
-  const { Box } = elements
+  const { Box, Svg } = elements
+
+  if (Svg !== undefined) {
+    const meters = metersRow(input.meters, input.isWorking)
+    return (
+      <Box flexDirection="column">
+        {meters === null ? null : renderRowSvg(Svg, 'meters', meters)}
+        {renderRowSvg(Svg, 'cache', cacheRow(input.view, input.plan, input.isWorking))}
+      </Box>
+    )
+  }
 
   return (
     <Box flexDirection="column">
       {hasMeters(input.meters)
         ? renderMetersLine(elements, input.meters, input.plan, input.isWorking)
         : null}
-      {elements.Svg === undefined
-        ? renderCacheLine(elements, input)
-        : renderDesktopCacheLine(elements, {
-            view: input.view,
-            plan: input.plan,
-            isWorking: input.isWorking,
-            turnCost: input.view.turnCost ?? undefined,
-            sessionCost:
-              input.plan.layout === 'narrow' ? undefined : input.view.sessionCost ?? undefined,
-          })}
+      {renderCacheLine(elements, input)}
     </Box>
   )
 }

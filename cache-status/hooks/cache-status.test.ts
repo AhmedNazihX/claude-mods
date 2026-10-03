@@ -91,9 +91,9 @@ const SAYS = {
   },
   desktop: {
     warm: (m: string) => `● cache ${m}`,
-    expiring: (m: string) => `◐ cache ${m} expiring`,
+    expiring: (m: string) => `● cache ${m} expiring`,
     narrowWarm: (m: string) => `● cache ${m}`,
-    working: '◌ cache replying…',
+    working: '○ cache replying…',
     hit: '90% hit',
   },
 } as const
@@ -114,8 +114,14 @@ const bandText = async (
     component: 'AbovePrompt',
     props: { hasSurvey: false, isWorking, maxRows: 10, bodyColumns: columns } as never,
   })
+  // The terminal draws Text; the desktop draws each line as an Svg whose
+  // alt text carries the same reading.
   const texts = await ui.findAll({ type: 'Text' })
-  return texts.map(found => found.text).join('')
+  const rows = await ui.findAll({ type: 'Svg' })
+  return [
+    ...texts.map(found => found.text),
+    ...rows.map(found => `${String(found.props.alt ?? '')}\n`),
+  ].join('')
 }
 
 for (const surface of SURFACES) {
@@ -168,7 +174,18 @@ for (const surface of SURFACES) {
       await clock.advance(20 * MINUTE_MS)
       const text = await bandText($, surface)
       expect(text).toContain(SAYS[surface].expiring('10m'))
-      expect(text).not.toContain(SAYS[surface].warm('10m'))
+      if (surface === 'terminal') {
+        expect(text).not.toContain(SAYS.terminal.warm('10m'))
+      } else {
+        const ui = await $.ui.mount({
+          plugin: 'cache-status',
+          surface,
+          component: 'AbovePrompt',
+          props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: WIDE } as never,
+        })
+        const rows = await ui.findAll({ type: 'Svg' })
+        expect(String(rows[rows.length - 1]?.props.source)).toContain('<circle cx="3.5" cy="9" r="3.5" fill="#f87171"/>')
+      }
       expect(await bandText($, surface, { columns: NARROW })).toContain(
         surface === 'terminal' ? '◐ 10m' : SAYS.desktop.expiring('10m'),
       )
@@ -214,9 +231,13 @@ for (const surface of SURFACES) {
       await completeTurn($)
       await $.session.measure(MEASURE as never)
       const text = await bandText($, surface)
-      expect(text).toContain('ctx ' + bar(surface, 6, 4) + ' 62% (compacts at 83%)')
-      expect(text).toContain('usage 5h ' + bar(surface, 4, 6) + ' 41%')
-      expect(text).toContain('week ' + bar(surface, 2, 8) + ' 18%')
+      if (surface === 'terminal') {
+        expect(text).toContain('ctx ' + bar(surface, 6, 4) + ' 62% (compacts at 83%)')
+        expect(text).toContain('usage 5h ' + bar(surface, 4, 6) + ' 41%')
+        expect(text).toContain('week ' + bar(surface, 2, 8) + ' 18%')
+      } else {
+        expect(text).toContain('ctx 62% usage 5h 41% week 18%')
+      }
     })
 
     test('a narrow band shows the meters as percentages only', async ($, on) => {
@@ -225,7 +246,9 @@ for (const surface of SURFACES) {
       await startSession($, surface)
       await completeTurn($)
       await $.session.measure(MEASURE as never)
-      expect(await bandText($, surface, { columns: NARROW })).toContain('ctx 62% · usage 5h 41% · week 18%')
+      expect(await bandText($, surface, { columns: NARROW })).toContain(
+        surface === 'terminal' ? 'ctx 62% · usage 5h 41% · week 18%' : 'ctx 62% usage 5h 41% week 18%',
+      )
     })
 
     test('says a reply is running while one is', async ($, on) => {
@@ -373,7 +396,7 @@ describe('the bar', () => {
 })
 
 describe('the desktop', () => {
-  test('draws each bar as an SVG pill instead of ticks', async ($, on) => {
+  test('draws each line as one small SVG, with no ticks', async ($, on) => {
     mock.clock(on, { now: 1_000 })
     engineBeneath(on, { usd: 0 })
     await startSession($, 'desktop')
@@ -385,7 +408,10 @@ describe('the desktop', () => {
       component: 'AbovePrompt',
       props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: WIDE } as never,
     })
-    expect(await ui.findAll({ type: 'Svg' })).toHaveLength(4)
+    const rows = await ui.findAll({ type: 'Svg' })
+    expect(rows).toHaveLength(2)
+    expect(String(rows[0]?.props.source)).toContain('font-size="11"')
+    expect(String(rows[1]?.props.alt)).toContain('● cache 60m')
     const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text).join('')
     expect(texts).not.toContain('▰')
   })

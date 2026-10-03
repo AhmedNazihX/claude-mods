@@ -9,11 +9,14 @@ ctx ▰▰▰▰▰▰▱▱▱▱ 62% (compacts at 83%) · usage 5h ▰▰▰�
 
 It appears after the first reply of a session and works in the terminal, the desktop app and VS Code.
 
-In the desktop app, whose proportional font can't line up tick characters, the bars are drawn as rows of small rounded blocks and the cache line uses a compact style:
+In the desktop app, whose UI font is large and proportional, each line is drawn as one compact SVG instead: small monospace text, rounded block bars and wide, even gaps.
 
 ```
-● cache 42m  ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▫  98% hit · cost $0.25 · session $0.25
+ctx ▪▫▫▫▫▫▫▫▫▫ 7%    usage 5h ▪▫▫▫▫▫▫▫▫▫ 8%    week ▪▪▪▪▪▪▪▪▪▪ 97%
+● cache 42m    ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪ 98% hit    cost $0.25    session $0.25
 ```
+
+Its colours are tuned for the desktop's dark theme.
 
 ## Reading the band
 
