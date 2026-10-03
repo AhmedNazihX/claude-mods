@@ -25,8 +25,12 @@ describe('recursive grep', () => {
     expect(rewriteSearch('ls -la')).toBeNull()
   })
 
-  test('still fixes a search whose --include selects .env', () => {
-    expect(rewritten('grep -rn --include=".env*" KEY .')).toBe(`grep ${GREP_EXCLUDE} -rn --include=".env*" KEY .`)
+  // Found by a security review: grep lets a later --include win over an
+  // earlier --exclude, so this rewrite let the guard pass and .env be read.
+  test('never touches a search that asks for env files by name', () => {
+    expect(rewriteSearch('grep -rn --include=".env*" KEY .')).toBeNull()
+    expect(rewriteSearch('grep -rn --include .env KEY .')).toBeNull()
+    expect(rewriteSearch('grep -rn --include=*.ts x . ; grep -rn --include=prod.env y .')).toBeNull()
   })
 })
 
@@ -48,6 +52,12 @@ describe('rg', () => {
   test('gets a negative glob when it searches hidden or ignored files', () => {
     expect(rewritten('rg --hidden foo')).toBe(`rg ${RG_EXCLUDE} --hidden foo`)
     expect(rewritten('rg -uu "x" src')).toBe(`rg ${RG_EXCLUDE} -uu "x" src`)
+  })
+
+  test('never touches a search with a positive glob for env files', () => {
+    expect(rewriteSearch("rg --hidden -g '.env' KEY")).toBeNull()
+    expect(rewriteSearch('rg -uu --glob=.env* KEY')).toBeNull()
+    expect(rewriteSearch("rg --hidden --iglob '*.ENV' KEY")).toBeNull()
   })
 
   test('is left alone otherwise', () => {

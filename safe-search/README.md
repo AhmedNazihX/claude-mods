@@ -23,6 +23,8 @@ When a command needs it, every `grep` word in it gets the exclude (and every `rg
 
 Everything else runs unchanged. Heredoc bodies (text being written to a file) are never touched. Each change is noted in the debug log (`claude --debug`).
 
+A search that asks for env files by name (`--include='.env*'`, or an rg glob like `-g '.env'`) is never rewritten: the later flag would override the exclude, so the guard blocks it as before.
+
 **Limit:** `grep -R` follows symlinks, and the exclude matches file *names*. A symlink with another name pointing at a `.env` file would still be read. The guard has the same gap.
 
 It only ever *adds* an exclusion: a command can read less after the change, never more.

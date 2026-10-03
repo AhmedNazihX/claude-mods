@@ -33,7 +33,7 @@
       "name": "safe-search",
       "source": "./safe-search",
       "description": "Adds the dotenv exclude to recursive greps and hidden rg searches so a secrets guard doesn't block them",
-      "version": "0.1.1"
+      "version": "0.1.2"
     }
   ]
 }

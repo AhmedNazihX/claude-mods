@@ -7,6 +7,10 @@ const HAS_INCLUDE = /--include(=|\s+)/
 const INCLUDES_ENV = /--include(=|\s+)['"]?[^\s]*env/
 const HIDDEN_RG = /(^|[^A-Za-z0-9_-])rg\s([^;&|]*\s)?(-[A-Za-z]*u[A-Za-z]*|--hidden|--no-ignore[A-Za-z-]*)(\s|$)/
 const RG_NEGATIVE_GLOB = /(-g|--glob)\s+['"]?!/
+// A search that asks for env files by name. grep's --include and rg's
+// positive globs override an exclude placed before them (the later flag
+// wins), so such a command is never rewritten: the guard blocks it.
+const ASKS_FOR_ENV = /--include(=|\s+)['"]?[^\s'"]*env|(-g|--glob|--iglob)(=|\s+)['"]?[^!\s'"][^\s'"]*env/i
 
 // Every command word, so the flag lands right after each one.
 const GREP_WORDS = /(^|[^A-Za-z0-9_-])([ef]?grep)(?=\s)/g
@@ -79,6 +83,7 @@ export const rewriteSearch = (command: string): Rewrite | null => {
     !(HAS_INCLUDE.test(checked) && !INCLUDES_ENV.test(checked))
   const isRgBlocked = HIDDEN_RG.test(checked) && !RG_NEGATIVE_GLOB.test(checked)
   if (!isGrepBlocked && !isRgBlocked) return null
+  if (ASKS_FOR_ENV.test(checked)) return null
 
   const fix = (text: string): string => {
     const withGrep = isGrepBlocked ? insertAfterEach(text, GREP_WORDS, GREP_EXCLUDE) : text
