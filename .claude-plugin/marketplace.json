@@ -9,7 +9,7 @@
       "name": "cache-status",
       "source": "./cache-status",
       "description": "Prompt-cache countdown, hit-rate bar and turn cost above the prompt",
-      "version": "0.7.0"
+      "version": "0.7.1"
     },
     {
       "name": "secret-guard",

@@ -145,11 +145,20 @@ export const register: Register = (on, options) => {
     const table = $.ui.resolve(e)
     const Svg = e.surface === 'desktop' && 'Svg' in table ? table.Svg : undefined
 
-    return renderBand({ Box: table.Box, Text: table.Text, Svg }, {
+    const band = renderBand({ Box: table.Box, Text: table.Text, Svg }, {
       view: toView(snapshot, await read($, now), settings),
       meters: toMetersView(await read($, meters), await read($, now)),
       plan: planLayout(e.props.bodyColumns, settings.barSegments),
       isWorking: e.props.isWorking,
     })
+    // Other plugins' bands (suggested-replies) draw beneath this one.
+    const below = await next(e)
+    const { Box } = table
+    return (
+      <Box flexDirection="column">
+        {band}
+        {below ?? null}
+      </Box>
+    )
   })
 }
