@@ -8,6 +8,8 @@ Plays a short chime and shows a toast when a long Claude reply finishes, so you 
 
 It only chimes for replies in the main conversation that ran at least 30 seconds. Short replies, replies you interrupted, and subagents stay quiet. If a reply ends on an error, the toast says so: `⚠️ Claude stopped: error (2m 3s)`.
 
+The toast goes after a few seconds, so the same line also stays in the status line under the prompt until you're back. It clears when you send your next prompt or the next reply starts.
+
 ## Settings
 
 In `/config`:

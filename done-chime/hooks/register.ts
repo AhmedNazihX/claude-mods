@@ -21,6 +21,8 @@ function chime($: EngineInterface, sound: Chime) {
   )
 }
 
+const unpin = ($: EngineInterface) => $.ui.status(undefined)
+
 export const register: Register = (on, options) => {
   const settings = toSettings(options)
 
@@ -32,10 +34,24 @@ export const register: Register = (on, options) => {
       reason: e.reason,
     }
     if (shouldChime(turn, settings)) {
-      $.ui.toast(messageFor(turn))
+      const message = messageFor(turn)
+      $.ui.toast(message)
+      $.ui.status(message)
       if (settings.hasSound) chime($, settings.chime)
     }
 
+    return next(e)
+  })
+
+  // The toast is gone in a few seconds, so its line also stays pinned under the
+  // prompt until the person is back: at their next prompt, or the next turn (a
+  // prompt typed while the long one ran was submitted before the pin went up).
+  on('prompt.submit', ($, e, next) => {
+    unpin($)
+    return next(e)
+  })
+  on('turn.start', ($, e, next) => {
+    unpin($)
     return next(e)
   })
 }
