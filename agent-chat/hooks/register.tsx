@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 
 import type { Subagent, FeedEntry } from '../types'
-import { addAgent, appendEntry, cleanText, endAgent, nameFor, usableAgents, usableFeed } from './feed'
+import { addAgent, appendEntry, cleanName, cleanText, endAgent, nameFor, usableAgents, usableFeed } from './feed'
 import { renderPane } from './pane'
 
 const PANE = 'agent-chat'
@@ -82,10 +82,11 @@ export const register: Register = (on, options) => {
     const now = await $.clock.now()
     const known = usableAgents(await read($, agents))
     const parentAgent = known.find(agent => agent.id === e.parentAgentId)
+    const type = cleanName(e.name ?? e.subagentType)
     const agent: Subagent = {
       id: started.agentId,
-      type: e.name ?? e.subagentType,
-      name: nameFor(known, e.name ?? e.subagentType, colour),
+      type,
+      name: nameFor(known, type, colour),
       parent: parentAgent?.name ?? 'main',
       colour,
       status: 'running',

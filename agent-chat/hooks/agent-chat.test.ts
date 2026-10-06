@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { PALETTE, cleanText, formatDuration, nameFor, usableAgents, usableFeed } from './feed'
+import { PALETTE, cleanName, cleanText, formatDuration, nameFor, usableAgents, usableFeed } from './feed'
 import { wrap } from './pane'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -190,6 +190,9 @@ describe('helpers', () => {
 
   test('cleanText drops control characters and extra blank lines', () => {
     expect(cleanText(`a${String.fromCharCode(27)}[2Jb\n\n\n\nc  `)).toBe('a[2Jb\n\nc')
+    expect(cleanText('safe\roverwrite')).toBe('safeoverwrite')
+    expect(cleanName(`Exp${String.fromCharCode(27)}]0;x${String.fromCharCode(7)}lore\nname`)).toBe('Exp]0;xlore name')
+    expect(cleanName('')).toBe('agent')
     expect(formatDuration(65_000)).toBe('1m 05s')
   })
 })

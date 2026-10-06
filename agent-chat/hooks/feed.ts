@@ -11,9 +11,12 @@ const SECONDS_PER_MINUTE = 60
 export const PALETTE = ['#60a5fa', '#f472b6', '#facc15', '#a78bfa', '#22d3ee', '#fb923c', '#2dd4bf'] as const
 
 // Control characters (ESC and kin) would reach the terminal as escape
-// sequences; the pane shows model text, so they are dropped first.
+// sequences, and a carriage return would draw over its own line; the pane
+// shows model text, so all of them but the newline and tab are dropped.
 // eslint-disable-next-line no-control-regex
-const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g
+const CONTROL_CHARS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g
+
+const NAME_CHARS = 40
 
 /** Text as the pane shows it: control characters out, blank lines collapsed, ends trimmed. */
 export const cleanText = (text: string): string =>
@@ -21,6 +24,10 @@ export const cleanText = (text: string): string =>
     .replace(CONTROL_CHARS, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+
+/** A subagent's type or given name as one printable line: the model chose it. */
+export const cleanName = (name: string): string =>
+  cleanText(name).replace(/\s+/g, ' ').slice(0, NAME_CHARS) || 'agent'
 
 export const colourOf = (colour: number): string => PALETTE[colour % PALETTE.length] ?? PALETTE[0]
 
