@@ -94,11 +94,17 @@ describe('JWT decoding', () => {
   })
 })
 
-// The engine beneath the guard: a write that reaches it succeeds.
+// The engine beneath the guard: a write that reaches it succeeds. Returns
+// the lines logged, as they arrive.
 const engineBeneath = (on: On) => {
+  const logged: string[] = []
   on('tool.call', () => ({ result: { type: 'create' }, text: 'written', isError: false }) as never)
   on('ui.toast', () => ({ value: undefined }) as never)
-  on('ui.log', () => ({ value: undefined }) as never)
+  on('ui.log', ($, e) => {
+    logged.push(e.text)
+    return { value: undefined } as never
+  })
+  return logged
 }
 
 const write = ($: Engine, file_path: string, content: string) =>
@@ -130,5 +136,19 @@ describe('the guard', () => {
   test('in warn mode lets the write through', { options: { mode: 'warn' } }, async ($, on) => {
     engineBeneath(on)
     expect(await write($, '/app/src/client.ts', `const key = "${ANTHROPIC}"`)).toMatchObject({ text: 'written' })
+  })
+
+  // Content that is not text makes the scan throw, standing in for any bug in it.
+  test('refuses a write it could not scan, and logs why', async ($, on) => {
+    const logged = engineBeneath(on)
+    const result = JSON.stringify(await write($, '/app/src/client.ts', null as never))
+    expect(result).not.toContain('written')
+    expect(result).toContain('could not be scanned for secrets')
+    expect(logged.some(line => line.includes('could not scan /app/src/client.ts'))).toBe(true)
+  })
+
+  test('in warn mode lets a write it could not scan through', { options: { mode: 'warn' } }, async ($, on) => {
+    engineBeneath(on)
+    expect(await write($, '/app/src/client.ts', null as never)).toMatchObject({ text: 'written' })
   })
 })

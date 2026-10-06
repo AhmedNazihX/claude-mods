@@ -1,4 +1,4 @@
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, HookFailure, Register } from 'claude-code'
 
 import { describeFindings, findSecrets, isSecretFile } from './scan'
 
@@ -31,6 +31,29 @@ function report($: EngineInterface, mode: Mode, path: string, reason: string) {
   $.ui.log(reason, { to: 'debug' })
 }
 
+// What Claude reads when a write could not be scanned: unchecked, it may
+// hold a secret, so it does not go through.
+const UNSCANNED =
+  'secret-guard: refused this write because it could not be scanned for secrets. ' +
+  'Try it again; if it keeps being refused, the reason is in the debug log.'
+
+/**
+ * The answer in place of a guard that failed (threw, ran out of time) before
+ * calling `next`. In block mode the write is refused, since a guard that fails
+ * open lets a secret through on any bug; in warn mode it goes on as a found
+ * secret would. On re-entry the guard did not run and `$` is closed to it, so
+ * nothing is logged.
+ */
+function onUnscanned($: EngineInterface, mode: Mode, path: string, error: HookFailure) {
+  if (error.kind !== 're-entry') {
+    $.ui.log(
+      `secret-guard: could not scan ${path} (${error.kind}: ${error.message ?? 'no detail'})`,
+      { to: 'debug' },
+    )
+  }
+  return mode === 'block' ? { deny: UNSCANNED } : undefined
+}
+
 export const register: Register = (on, options) => {
   const mode = toMode(options?.mode)
 
@@ -39,19 +62,19 @@ export const register: Register = (on, options) => {
     if (reason === undefined) return next(e)
     report($, mode, e.file_path, reason)
     return mode === 'block' ? { deny: reason } : next(e)
-  })
+  }).catch(($, e, next) => (next.called ? next(e) : onUnscanned($, mode, e.file_path, next.error)))
 
   on('tool.call', { tool: 'Edit' }, ($, e, next) => {
     const reason = verdictFor(e.file_path, e.new_string)
     if (reason === undefined) return next(e)
     report($, mode, e.file_path, reason)
     return mode === 'block' ? { deny: reason } : next(e)
-  })
+  }).catch(($, e, next) => (next.called ? next(e) : onUnscanned($, mode, e.file_path, next.error)))
 
   on('tool.call', { tool: 'NotebookEdit' }, ($, e, next) => {
     const reason = verdictFor(e.notebook_path, e.new_source)
     if (reason === undefined) return next(e)
     report($, mode, e.notebook_path, reason)
     return mode === 'block' ? { deny: reason } : next(e)
-  })
+  }).catch(($, e, next) => (next.called ? next(e) : onUnscanned($, mode, e.notebook_path, next.error)))
 }
