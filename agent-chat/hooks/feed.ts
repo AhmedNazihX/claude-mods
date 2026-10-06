@@ -1,6 +1,6 @@
-import type { Subagent, AgentStatus, FeedEntry } from '../types'
+import type { AgentStatus, Subagent } from '../types'
 
-const MAX_ENTRIES = 200
+const MAX_AGENTS = 50
 const MS_PER_SECOND = 1000
 const SECONDS_PER_MINUTE = 60
 
@@ -41,35 +41,46 @@ export const nameFor = (agents: readonly Subagent[], type: string, colour: numbe
   return same === 0 ? type : `${type} #${same + 1}`
 }
 
-export const addAgent = (agents: readonly Subagent[], agent: Subagent): Subagent[] => [...agents, agent]
+/** Adds a subagent, dropping the oldest past MAX_AGENTS. */
+export const addAgent = (agents: readonly Subagent[], agent: Subagent): Subagent[] => [...agents, agent].slice(-MAX_AGENTS)
 
-export const endAgent = (agents: readonly Subagent[], id: string, status: AgentStatus, now: number): Subagent[] =>
-  agents.map(agent => (agent.id === id ? { ...agent, status, endedAt: now } : agent))
+/** Its run ended: its status, when, and the report it sent back. */
+export const finishAgent = (agents: readonly Subagent[], id: string, status: AgentStatus, now: number, report: string): Subagent[] =>
+  agents.map(agent => (agent.id === id ? { ...agent, status, endedAt: now, report } : agent))
 
-/** Adds a message, dropping the oldest past MAX_ENTRIES. */
-export const appendEntry = (feed: readonly FeedEntry[], entry: FeedEntry): FeedEntry[] => [...feed, entry].slice(-MAX_ENTRIES)
+export const toggle = (ids: readonly string[], id: string): string[] =>
+  ids.includes(id) ? ids.filter(one => one !== id) : [...ids, id]
+
+export type Shown = { text: string; hiddenLines: number }
+
+/**
+ * The first `maxLines` lines of a markdown text, and how many are left out.
+ * A cut inside a code fence closes the fence, so the rest is not drawn as code.
+ */
+export const firstLines = (text: string, maxLines: number): Shown => {
+  const lines = text.split('\n')
+  if (lines.length <= maxLines) return { text, hiddenLines: 0 }
+  const kept = lines.slice(0, maxLines)
+  const fences = kept.filter(line => line.trimStart().startsWith('```')).length
+  return { text: [...kept, ...(fences % 2 === 1 ? ['```'] : [])].join('\n'), hiddenLines: lines.length - maxLines }
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 
 /**
- * The messages and subagents as this version draws them. Stored state
- * outlives a reload of the mod, so it can hold what an older version kept
- * (tool lines, agents without a name); those are left out, not drawn.
+ * The subagents as this version draws them. Stored state outlives a reload
+ * of the mod, so it can hold what an older version kept (agents without a
+ * task); those are left out, not drawn.
  */
-export const usableFeed = (feed: readonly unknown[]): FeedEntry[] =>
-  feed.filter(
-    (entry): entry is FeedEntry =>
-      isRecord(entry) &&
-      (entry.kind === 'handoff' || entry.kind === 'return') &&
-      typeof entry.key === 'string' &&
-      typeof entry.agentId === 'string' &&
-      typeof entry.text === 'string',
-  )
-
 export const usableAgents = (agents: readonly unknown[]): Subagent[] =>
   agents.filter(
     (agent): agent is Subagent =>
-      isRecord(agent) && typeof agent.id === 'string' && typeof agent.type === 'string' && typeof agent.name === 'string',
+      isRecord(agent) &&
+      typeof agent.id === 'string' &&
+      typeof agent.type === 'string' &&
+      typeof agent.name === 'string' &&
+      typeof agent.task === 'string' &&
+      (agent.report === null || typeof agent.report === 'string'),
   )
 
 /** `0.4s`, `12s`, `1m 05s`. */

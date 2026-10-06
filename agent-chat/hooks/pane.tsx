@@ -1,116 +1,117 @@
 import type { ElementTable } from 'claude-code'
 
-import type { Subagent, FeedEntry } from '../types'
-import { colourOf, formatDuration } from './feed'
+import type { Subagent } from '../types'
+import { colourOf, firstLines, formatDuration } from './feed'
 
-type Elements = Pick<ElementTable, 'Box' | 'Text'>
+type Elements = Pick<ElementTable, 'Box' | 'Text' | 'Markdown' | 'Button'>
 
-export type PaneInput = { feed: readonly FeedEntry[]; agents: readonly Subagent[]; columns: number }
-
-// The first lines of a message; the rest is counted, so one long report
-// does not push every other message off the pane.
-const MAX_BODY_LINES = 6
-const INDENT = '  '
-
-/** One row of the pane, in its parts and their colours. */
-type Part = { text: string; color?: string; dim?: boolean; bold?: boolean }
-type Row = { key: string; parts: Part[] }
-
-
-/** Breaks `text` into lines of at most `width` characters, at spaces where it can. */
-export const wrap = (text: string, width: number): string[] =>
-  text.split('\n').flatMap(paragraph => {
-    if (paragraph.trim() === '') return ['']
-    const lines: string[] = []
-    let line = ''
-    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
-      const pieces = word.length > width ? (word.match(new RegExp(`.{1,${width}}`, 'g')) ?? [word]) : [word]
-      for (const piece of pieces) {
-        if (line === '') line = piece
-        else if (line.length + 1 + piece.length <= width) line = `${line} ${piece}`
-        else {
-          lines.push(line)
-          line = piece
-        }
-      }
-    }
-    return [...lines, line]
-  })
-
-const bodyRows = (key: string, text: string, width: number, dim: boolean): Row[] => {
-  const lines = wrap(text === '' ? '(no text)' : text, Math.max(width - INDENT.length, 10))
-  const shown = lines.slice(0, MAX_BODY_LINES)
-  const more = lines.length - shown.length
-  return [
-    ...shown.map((line, index) => ({ key: `${key}-${index}`, parts: [{ text: `${INDENT}${line}`, dim }] })),
-    ...(more > 0 ? [{ key: `${key}-more`, parts: [{ text: `${INDENT}… ${more} more line${more === 1 ? '' : 's'}`, dim: true }] }] : []),
-  ]
+export type PaneInput = {
+  agents: readonly Subagent[]
+  expanded: ReadonlySet<string>
+  now: number
+  columns: number
+  onToggle: (id: string) => void
 }
 
-const entryRows = (entry: FeedEntry, agent: Subagent | undefined, width: number, isLastOfAgent: boolean): Row[] => {
-  // Each subagent keeps its colour, dot and name, so its messages read as one voice.
-  const name: Part = { text: `● ${agent?.name ?? 'agent'}`, color: colourOf(agent?.colour ?? 0), bold: true }
-  const parent: Part = { text: agent?.parent ?? 'main', dim: true }
-  if (entry.kind === 'handoff') {
-    const working = agent?.status === 'running' && isLastOfAgent
-    return [
-      { key: `${entry.key}-h`, parts: [parent, { text: ' → ', dim: true }, name] },
-      ...bodyRows(entry.key, entry.text, width, true),
-      ...(working ? [{ key: `${entry.key}-w`, parts: [{ text: `${INDENT}⋯ working`, color: 'cyan' }] }] : []),
-      { key: `${entry.key}-gap`, parts: [{ text: '' }] },
-    ]
-  }
-  const isDone = entry.status === 'done'
-  return [
-    {
-      key: `${entry.key}-h`,
-      parts: [
-        name,
-        { text: ' → ', dim: true },
-        parent,
-        { text: `   ${isDone ? 'done' : 'stopped'}`, color: isDone ? 'green' : 'red' },
-        { text: ` · ${formatDuration(entry.durationMs)}`, dim: true },
-      ],
-    },
-    ...bodyRows(entry.key, entry.text, width, false),
-    { key: `${entry.key}-gap`, parts: [{ text: '' }] },
-  ]
+// The first lines of a task and of a report; the rest opens with a button,
+// so one long report does not push every other card off the pane.
+const TASK_LINES = 4
+const REPORT_LINES = 6
+// The most a Markdown element draws.
+const MAX_MARKDOWN_CHARS = 10_000
+// Border and padding on each side of a card.
+const CARD_CHROME = 4
+
+const STATUS = {
+  running: { word: 'working', color: undefined },
+  done: { word: 'done', color: 'green' },
+  failed: { word: 'stopped', color: 'red' },
+} as const
+
+const statusText = (agent: Subagent, now: number): string =>
+  `${STATUS[agent.status].word} · ${formatDuration((agent.endedAt ?? now) - agent.startedAt)}`
+
+/** A block of markdown under a dim heading, its first lines unless opened in full. */
+const renderSection = (
+  { Box, Text, Markdown, Button }: Elements,
+  key: string,
+  heading: string,
+  text: string,
+  maxLines: number,
+  isOpen: boolean,
+  onToggle: () => void,
+) => {
+  const whole = text.slice(0, MAX_MARKDOWN_CHARS) || '(no text)'
+  const shown = isOpen ? { text: whole, hiddenLines: 0 } : firstLines(whole, maxLines)
+  const canToggle = isOpen || shown.hiddenLines > 0
+  return (
+    <Box key={key} flexDirection="column">
+      <Text dimColor>{heading}</Text>
+      <Box paddingLeft={2} flexDirection="column">
+        <Markdown text={shown.text} />
+      </Box>
+      {canToggle ? (
+        <Box paddingLeft={2}>
+          <Button
+            key={`${key}-toggle`}
+            plain
+            dimColor
+            label={isOpen ? '▴ show less' : `▾ show ${shown.hiddenLines} more line${shown.hiddenLines === 1 ? '' : 's'}`}
+            onPress={onToggle}
+          />
+        </Box>
+      ) : null}
+    </Box>
+  )
+}
+
+const renderCard = (elements: Elements, agent: Subagent, input: PaneInput) => {
+  const { Box, Text } = elements
+  const colour = colourOf(agent.colour)
+  const status = STATUS[agent.status]
+  const toggle = (part: string) => () => input.onToggle(`${agent.id}:${part}`)
+  const isOpen = (part: string) => input.expanded.has(`${agent.id}:${part}`)
+
+  return (
+    <Box key={agent.id} flexDirection="column" borderStyle="round" borderColor={colour} paddingX={1} marginBottom={1}>
+      <Box justifyContent="space-between">
+        <Text color={colour} bold>{`● ${agent.name}`}</Text>
+        <Text color={status.color ?? colour}>{statusText(agent, input.now)}</Text>
+      </Box>
+      {renderSection(elements, `${agent.id}-task`, `${agent.parent} asked`, agent.task, TASK_LINES, isOpen('task'), toggle('task'))}
+      {agent.report === null ? (
+        <Text color={colour}>{'⋯ working'}</Text>
+      ) : (
+        <Box flexDirection="column">
+          <Text dimColor>{'─'.repeat(Math.max(input.columns - CARD_CHROME, 4))}</Text>
+          {renderSection(elements, `${agent.id}-report`, `${agent.name} replied`, agent.report, REPORT_LINES, isOpen('report'), toggle('report'))}
+        </Box>
+      )}
+    </Box>
+  )
 }
 
 /**
- * The messages between Claude and its subagents, newest at the bottom:
- * each task Claude handed over and each report sent back, under the
- * subagent's coloured name. Every message is drawn; the pane scrolls over
- * them and follows the newest while the person stays at the bottom.
+ * The conversations between Claude and its subagents: one card per
+ * subagent in the order they started, in its colour, with the task it was
+ * handed and the report it sent back. Every card is drawn; the pane scrolls.
  */
-export const renderPane = ({ Box, Text }: Elements, { feed, agents, columns }: PaneInput) => {
-  if (agents.length === 0) {
+export const renderPane = (elements: Elements, input: PaneInput) => {
+  const { Box, Text } = elements
+  if (input.agents.length === 0) {
     return (
       <Box flexDirection="column">
-        <Text dimColor>No subagents yet. When Claude hands one a task, their messages show up here.</Text>
+        <Text dimColor>No subagents yet. When Claude hands one a task, their conversation shows up here.</Text>
       </Box>
     )
   }
-  const byId = new Map(agents.map(agent => [agent.id, agent]))
-  const lastOfAgent = new Map(feed.map(entry => [entry.agentId, entry.key]))
-  const all = feed.flatMap(entry => entryRows(entry, byId.get(entry.agentId), columns, lastOfAgent.get(entry.agentId) === entry.key))
-  const running = agents.filter(agent => agent.status === 'running').length
-
+  const running = input.agents.filter(agent => agent.status === 'running').length
   return (
     <Box flexDirection="column">
-      <Text dimColor>{`${running} running · ${agents.length - running} finished`}</Text>
-      <Text>{''}</Text>
-      {all.map(row => (
-        <Box key={row.key}>
-          <Text wrap="truncate">
-            {row.parts.map((part, index) => (
-              <Text key={`${row.key}-${index}`} color={part.color} dimColor={part.dim} bold={part.bold}>
-                {part.text}
-              </Text>
-            ))}
-          </Text>
-        </Box>
-      ))}
+      <Box marginBottom={1}>
+        <Text dimColor>{`${running} working · ${input.agents.length - running} finished`}</Text>
+      </Box>
+      {input.agents.map(agent => renderCard(elements, agent, input))}
     </Box>
   )
 }

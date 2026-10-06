@@ -1,9 +1,9 @@
 export type AgentStatus = 'running' | 'done' | 'failed'
 
-/** A subagent of the session, as the pane names and colours it. */
+/** A subagent of the session: who it is, the task it was handed, and its report. */
 export type Subagent = {
   id: string
-  /** The agent type: `Explore`, `general-purpose`. */
+  /** The agent type, or the name the Agent call gave it. */
   type: string
   /** As the pane names it: the type, with `#2` only when its colour came round again. */
   name: string
@@ -14,15 +14,20 @@ export type Subagent = {
   status: AgentStatus
   startedAt: number
   endedAt: number | null
+  /** The task it was handed, as markdown. */
+  task: string
+  /** What it sent back, as markdown; null while it works. */
+  report: string | null
 }
-
-/** One message between Claude and a subagent. */
-export type FeedEntry =
-  | { kind: 'handoff'; key: string; agentId: string; text: string }
-  | { kind: 'return'; key: string; agentId: string; status: AgentStatus; durationMs: number; text: string }
 
 declare module 'claude-code' {
   interface PluginState {
-    'agent-chat': { feed: FeedEntry[]; agents: Subagent[] }
+    'agent-chat': {
+      agents: Subagent[]
+      /** The ids of the cards the person opened in full. */
+      expanded: string[]
+      /** The time the live timers read, moved on each second while a subagent works. */
+      now: number
+    }
   }
 }

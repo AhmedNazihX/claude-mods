@@ -1,8 +1,8 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, PluginOptions, Register } from 'claude-code'
+import type { EngineInterface, PluginOptions, Register, Timer } from 'claude-code'
 
-import type { Subagent, FeedEntry } from '../types'
-import { addAgent, appendEntry, cleanName, cleanText, endAgent, nameFor, usableAgents, usableFeed } from './feed'
+import type { Subagent } from '../types'
+import { addAgent, cleanName, cleanText, finishAgent, nameFor, toggle, usableAgents } from './feed'
 import { renderPane } from './pane'
 
 const PANE = 'agent-chat'
@@ -12,8 +12,11 @@ const DEFAULT_COLUMNS = 60
 const MIN_COLUMNS = 30
 const MAX_COLUMNS = 120
 
-const feed = atom({ plugin: 'agent-chat', key: 'feed' } as const, [] as FeedEntry[])
+const TICK_MS = 1000
+
 const agents = atom({ plugin: 'agent-chat', key: 'agents' } as const, [] as Subagent[])
+const expanded = atom({ plugin: 'agent-chat', key: 'expanded' } as const, [] as string[])
+const now = atom({ plugin: 'agent-chat', key: 'now' } as const, 0)
 
 type Settings = { isAutoOpen: boolean; columns: number }
 
@@ -25,8 +28,8 @@ const toSettings = (options: PluginOptions = {}): Settings => ({
       : DEFAULT_COLUMNS,
 })
 
-// Messages without an id of their own still need one.
-let entryCount = 0
+// Moves the live timers on each second while a subagent works.
+let ticker: Timer | undefined
 // The pane opens by itself once a session, at the first subagent.
 let hasAutoOpened = false
 // The next subagent's colour. Taken in one step as a subagent starts, so two
@@ -35,8 +38,6 @@ let nextColour = 0
 // Whether the pane follows new messages: true until the person scrolls up,
 // and again once they scroll back to the bottom.
 let isFollowing = true
-
-const nextKey = (prefix: string): string => `${prefix}-${(entryCount += 1)}`
 
 function log($: EngineInterface, what: string, error: unknown) {
   $.ui.log(`agent-chat: ${what}: ${error}`, { to: 'debug' })
@@ -47,6 +48,24 @@ function openPane($: EngineInterface, settings: Settings) {
     .open({ id: PANE, title: PANE_TITLE, columns: settings.columns })
     .then(() => followNewest($))
     .catch(error => log($, 'could not open the pane', error))
+}
+
+function stopTicker() {
+  ticker?.cancel()
+  ticker = undefined
+}
+
+function tick($: EngineInterface) {
+  $.clock
+    .now()
+    .then(time => update($, now, () => time))
+    .catch(error => log($, 'could not move the timers', error))
+}
+
+function startTicker($: EngineInterface) {
+  if (ticker !== undefined) return
+  tick($)
+  ticker = $.clock.every(TICK_MS, () => tick($))
 }
 
 // Shows the newest message, unless the person scrolled up to read.
@@ -62,6 +81,7 @@ export const register: Register = (on, options) => {
     // A reload starts the module over; colours go on from those already given.
     const known = usableAgents(await read($, agents))
     nextColour = Math.max(nextColour, ...known.map(agent => agent.colour + 1))
+    if (known.some(agent => agent.status === 'running')) startTicker($)
     await $.command
       .register({ name: COMMAND, description: 'Show the messages between Claude and its subagents in a side pane' })
       .catch(error => log($, `could not register /${COMMAND}`, error))
@@ -79,7 +99,7 @@ export const register: Register = (on, options) => {
     if (started.agentId === undefined) return started
     const colour = nextColour
     nextColour += 1
-    const now = await $.clock.now()
+    const time = await $.clock.now()
     const known = usableAgents(await read($, agents))
     const parentAgent = known.find(agent => agent.id === e.parentAgentId)
     const type = cleanName(e.name ?? e.subagentType)
@@ -90,11 +110,13 @@ export const register: Register = (on, options) => {
       parent: parentAgent?.name ?? 'main',
       colour,
       status: 'running',
-      startedAt: now,
+      startedAt: time,
       endedAt: null,
+      task: cleanText(e.prompt),
+      report: null,
     }
     await update($, agents, list => addAgent(usableAgents(list), agent))
-    await update($, feed, list => appendEntry(usableFeed(list), { kind: 'handoff', key: nextKey('handoff'), agentId: agent.id, text: cleanText(e.prompt) }))
+    startTicker($)
     if (settings.isAutoOpen && !hasAutoOpened) {
       hasAutoOpened = true
       openPane($, settings)
@@ -106,12 +128,10 @@ export const register: Register = (on, options) => {
   on('turn.complete', async ($, e, next) => {
     const agent = e.agentId === undefined ? undefined : usableAgents(await read($, agents)).find(one => one.id === e.agentId)
     if (agent !== undefined) {
-      const now = await $.clock.now()
+      const time = await $.clock.now()
       const status = e.reason === 'answer' ? 'done' : 'failed'
-      await update($, agents, list => endAgent(usableAgents(list), agent.id, status, now))
-      await update($, feed, list =>
-        appendEntry(usableFeed(list), { kind: 'return', key: nextKey('return'), agentId: agent.id, status, durationMs: now - agent.startedAt, text: cleanText(e.answer) }),
-      )
+      const after = await update($, agents, list => finishAgent(usableAgents(list), agent.id, status, time, cleanText(e.answer)))
+      if (!after.some(one => one.status === 'running')) stopTicker()
       followNewest($)
     }
     return next(e)
@@ -127,9 +147,13 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
     renderPane($.ui.resolve(e), {
-      feed: usableFeed(await read($, feed)),
       agents: usableAgents(await read($, agents)),
+      expanded: new Set(await read($, expanded)),
+      now: await read($, now),
       columns: e.props.bodyColumns,
+      onToggle: id => {
+        update($, expanded, ids => toggle(ids, id)).catch(error => log($, 'could not open the card', error))
+      },
     }),
   )
 }

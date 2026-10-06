@@ -1,25 +1,34 @@
 # agent-chat
 
-A side pane with the messages between Claude and its subagents, live: the task Claude handed each subagent, and the report it sent back. What a subagent does along the way stays out, and so does the main conversation, which is in the transcript already. Claude Code shows a subagent there as one `Agent` row; this pane shows the conversation.
+A side pane with the conversations between Claude and its subagents, live: one card per subagent with the task Claude handed it and the report it sent back. What a subagent does along the way stays out, and so does the main conversation, which is in the transcript already. Claude Code shows a subagent there as one `Agent` row; this pane shows the conversation.
 
 ```
-1 running · 1 finished
+1 working · 1 finished
 
-main → ● Explore
-  In cache-status, find where the band above the prompt
-  is drawn (the ui.render hook for AbovePrompt …)
-
-● Explore → main   done · 22s
-  I found both: the hook is in register.tsx and the
-  function that builds the band is renderBand in band.tsx.
-  … 9 more lines
-
-main → ● Explore
-  In done-chime, list each hook the mod registers …
-  ⋯ working
+╭──────────────────────────────────────────────────╮
+│ ● Explore                            done · 22s  │
+│ main asked                                       │
+│   In cache-status, find where the band above the │
+│   prompt is drawn …                              │
+│ ──────────────────────────────────────────────── │
+│ Explore replied                                  │
+│   I found both: the hook is in register.tsx and  │
+│   the band is built by renderBand in band.tsx.   │
+│   ▾ show 9 more lines                            │
+╰──────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────╮
+│ ● Explore                           working · 8s │
+│ main asked                                       │
+│   In done-chime, list each hook the mod …        │
+│ ⋯ working                                        │
+╰──────────────────────────────────────────────────╯
 ```
 
-Each subagent is named by its type and keeps one colour (a dot and its name), so two `Explore` subagents read apart by colour: blue, pink, yellow, violet, cyan, orange, teal, in the order they start, none of them the green and red the pane keeps for `done` and `stopped`. Past seven, when a colour comes round again for the same type, the name gets a number (`Explore #2`). A subagent started by another names that one instead of `main`. A message shows its first 6 lines and counts the rest; a run cut short reads `stopped`.
+- **One card per subagent**, in the order they started, its border, dot and name in the subagent's colour. Two `Explore` subagents read apart by colour: blue, pink, yellow, violet, cyan, orange, teal, none of them the green and red kept for `done` and `stopped`. Past seven, when a colour comes round again for the same type, the name gets a number (`Explore #2`).
+- **The task and the report are drawn as markdown**, as a reply is: bold, code, lists and links read as they should.
+- **Long ones are cut** to their first lines (4 of a task, 6 of a report); `▾ show N more lines` opens the rest and `▴ show less` shuts it again. Click it, or press it once the pane has the keys.
+- **The time counts up live** while a subagent works, and stays at its total once it is done.
+- A subagent started by another says who asked it; a run cut short reads `stopped`.
 
 Scroll the pane with the wheel or trackpad to read back. It follows the newest message while you're at the bottom, and stays where you are once you scroll up, until you scroll back down.
 
