@@ -18,6 +18,14 @@ export type Subagent = {
   task: string
   /** What it sent back, as markdown; null while it works. */
   report: string | null
+  /** The model it runs on, as Claude Code resolved it ('' when not told). */
+  model: string
+  /** Its own calls so far: every tool, and of them its skills and the subagents it started. */
+  tools: number
+  skills: number
+  agents: number
+  /** The tokens its runs went through (input, output and cache), once a run ended. */
+  tokens: number | null
 }
 
 declare module 'claude-code' {

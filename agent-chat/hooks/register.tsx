@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PluginOptions, Register, Timer } from 'claude-code'
 
 import type { Subagent } from '../types'
-import { addAgent, cleanName, cleanText, finishAgent, nameFor, toggle, usableAgents } from './feed'
+import { addAgent, cleanName, cleanText, countTool, finishAgent, nameFor, toggle, tokensOf, usableAgents } from './feed'
 import { renderPane } from './pane'
 import { agentResultReport, handbackText, isHandback, rowText } from './reports'
 
@@ -119,6 +119,11 @@ export const register: Register = (on, options) => {
       endedAt: null,
       task: cleanText(e.prompt),
       report: null,
+      model: started.model ?? '',
+      tools: 0,
+      skills: 0,
+      agents: 0,
+      tokens: null,
     }
     await update($, agents, list => addAgent(usableAgents(list), agent))
     startTicker($)
@@ -136,6 +141,11 @@ export const register: Register = (on, options) => {
     if (e.agentId !== undefined && isHandback(e.tool)) {
       const text = handbackText(e)
       if (text.trim() !== '') handedBack.set(e.agentId, text)
+    } else if (e.agentId !== undefined) {
+      // A subagent's own call: counted for its card as it starts.
+      const id = e.agentId
+      const known = usableAgents(await read($, agents)).some(one => one.id === id)
+      if (known) await update($, agents, list => countTool(usableAgents(list), id, e.tool))
     }
     const ran = await next(e)
     if (e.agentId === undefined && e.tool === 'Agent') {
@@ -164,7 +174,12 @@ export const register: Register = (on, options) => {
       const report = handedBack.get(agent.id) || e.answer || lastSaid.get(agent.id) || ''
       handedBack.delete(agent.id)
       lastSaid.delete(agent.id)
-      const after = await update($, agents, list => finishAgent(usableAgents(list), agent.id, status, time, cleanText(report)))
+      const tokens = tokensOf(e.usage)
+      const after = await update($, agents, list =>
+        finishAgent(usableAgents(list), agent.id, status, time, cleanText(report)).map(one =>
+          one.id === agent.id ? { ...one, tokens: (one.tokens ?? 0) + tokens, model: one.model || (e.usage?.model ?? '') } : one,
+        ),
+      )
       if (!after.some(one => one.status === 'running')) stopTicker()
       followNewest($)
     }

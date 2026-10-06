@@ -72,8 +72,21 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
  * of the mod, so it can hold what an older version kept (agents without a
  * task); those are left out, not drawn.
  */
+const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
+
+/** A stored subagent with the stats an older version did not keep filled in. */
+const withStats = (agent: Subagent): Subagent => ({
+  ...agent,
+  model: typeof agent.model === 'string' ? agent.model : '',
+  tools: count(agent.tools),
+  skills: count(agent.skills),
+  agents: count(agent.agents),
+  tokens: typeof agent.tokens === 'number' ? agent.tokens : null,
+})
+
 export const usableAgents = (agents: readonly unknown[]): Subagent[] =>
-  agents.filter(
+  agents
+    .filter(
     (agent): agent is Subagent =>
       isRecord(agent) &&
       typeof agent.id === 'string' &&
@@ -81,7 +94,52 @@ export const usableAgents = (agents: readonly unknown[]): Subagent[] =>
       typeof agent.name === 'string' &&
       typeof agent.task === 'string' &&
       (agent.report === null || typeof agent.report === 'string'),
+    )
+    .map(withStats)
+
+/** Counts one call of a subagent: a tool, and a skill or a subagent it started. */
+export const countTool = (agents: readonly Subagent[], id: string, tool: string): Subagent[] =>
+  agents.map(agent =>
+    agent.id === id
+      ? { ...agent, tools: agent.tools + 1, skills: agent.skills + (tool === 'Skill' ? 1 : 0), agents: agent.agents + (tool === 'Agent' ? 1 : 0) }
+      : agent,
   )
+
+export type Usage = { input_tokens: number; output_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number }
+
+/** Every token a run went through: input, output, and cache read and written. */
+export const tokensOf = (usage: Usage | undefined): number =>
+  usage === undefined
+    ? 0
+    : count(usage.input_tokens) + count(usage.output_tokens) + count(usage.cache_read_input_tokens) + count(usage.cache_creation_input_tokens)
+
+/** `claude-haiku-4-5-20251001` reads as `haiku 4.5`. */
+export const modelName = (model: string): string =>
+  model
+    .replace(/^claude-/, '')
+    .replace(/-\d{8}$/, '')
+    .replace(/-(\d+)-(\d+)$/, ' $1.$2')
+
+/** `950`, `12.4k`, `1.2M`. */
+export const formatTokens = (tokens: number): string => {
+  if (tokens < 1000) return String(tokens)
+  if (tokens < 1_000_000) return `${(tokens / 1000).toFixed(tokens < 10_000 ? 1 : 0)}k`
+  return `${(tokens / 1_000_000).toFixed(1)}M`
+}
+
+const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
+
+/** `haiku 4.5 · 6 tools · 1 skill · 0 agents · 12.4k tokens`. */
+export const statsText = (agent: Subagent): string =>
+  [
+    agent.model === '' ? undefined : modelName(agent.model),
+    plural(agent.tools, 'tool'),
+    plural(agent.skills, 'skill'),
+    plural(agent.agents, 'agent'),
+    agent.tokens === null ? undefined : `${formatTokens(agent.tokens)} tokens`,
+  ]
+    .filter((part): part is string => part !== undefined)
+    .join(' · ')
 
 /** `0.4s`, `12s`, `1m 05s`. */
 export const formatDuration = (ms: number): string => {

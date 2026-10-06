@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { PALETTE, cleanName, cleanText, firstLines, formatDuration, nameFor, usableAgents } from './feed'
+import { PALETTE, cleanName, cleanText, firstLines, formatDuration, formatTokens, modelName, nameFor, usableAgents } from './feed'
 
 const SURFACES = ['terminal', 'desktop'] as const
 type Surface = (typeof SURFACES)[number]
@@ -13,7 +13,7 @@ const logged: string[] = []
 // The engine beneath the mod: a spawn starts a subagent with an id from its
 // task's description; a run ends with the answer it is given.
 const engineBeneath = (on: On, opened: unknown[] = []) => {
-  on('agent.spawn', ($, e) => ({ agentId: `id-${e.description}`, model: 'haiku' }) as never)
+  on('agent.spawn', ($, e) => ({ agentId: `id-${e.description}`, model: 'claude-haiku-4-5-20251001' }) as never)
   on('tool.call', ($, e) => {
     // A sync Agent call returns the subagent's report in its result.
     if (e.tool === 'Agent') {
@@ -35,8 +35,10 @@ const engineBeneath = (on: On, opened: unknown[] = []) => {
 const spawn = ($: Engine, description: string, prompt = `Please ${description}.`, subagentType = 'Explore', parentAgentId?: string) =>
   $.agent.spawn({ prompt, description, subagentType, ...(parentAgentId === undefined ? {} : { parentAgentId }) } as never)
 
+const USAGE = { input_tokens: 2000, output_tokens: 400, cache_read_input_tokens: 10_000, cache_creation_input_tokens: 0, model: 'claude-haiku-4-5-20251001' }
+
 const finish = ($: Engine, agentId: string, answer: string, reason = 'answer') =>
-  $.turn.complete({ answer, durationMs: 1, isAborted: reason === 'aborted', turnId: 't', reason, agentId } as never)
+  $.turn.complete({ answer, durationMs: 1, isAborted: reason === 'aborted', turnId: 't', reason, agentId, usage: USAGE } as never)
 
 const mountPane = ($: Engine, surface: Surface) =>
   $.ui.mount({
@@ -176,6 +178,20 @@ for (const surface of SURFACES) {
       expect((await paneText($, surface)).includes('────')).toBe(surface === 'terminal')
     })
 
+    test('shows the model and counts tools, skills and agents live, then the tokens', async ($, on) => {
+      mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      await spawn($, 'Counted')
+      const ui = await mountPane($, surface)
+      expect(await textOf(ui)).toContain('haiku 4.5 · 0 tools · 0 skills · 0 agents')
+      for (const tool of ['Read', 'Grep', 'Skill', 'Agent']) {
+        await $.tool.call({ tool, agentId: 'id-Counted' } as never)
+      }
+      expect(await textOf(ui)).toContain('haiku 4.5 · 4 tools · 1 skill · 1 agent')
+      await finish($, 'id-Counted', 'Done.')
+      expect(await textOf(ui)).toContain('haiku 4.5 · 4 tools · 1 skill · 1 agent · 12k tokens')
+    })
+
     test('names the subagent that started a nested one, and marks a run cut short', async ($, on) => {
       mock.clock(on, { now: 0 })
       engineBeneath(on)
@@ -229,6 +245,11 @@ describe('helpers', () => {
     endedAt: null,
     task: 'go',
     report: null,
+    model: '',
+    tools: 0,
+    skills: 0,
+    agents: 0,
+    tokens: null,
   })
 
   test('nameFor gives the type, numbered only when its colour comes round again', () => {
@@ -247,6 +268,21 @@ describe('helpers', () => {
   test('leaves out what an older version stored', () => {
     const old = [{ id: 'a', label: 'Explore' }, { id: 'b', type: 'Explore', name: 'Explore' }, agent('Explore', 3), null]
     expect(usableAgents(old).map(one => one.id)).toEqual(['Explore3'])
+  })
+
+  test('model names and token counts read short', () => {
+    expect(modelName('claude-haiku-4-5-20251001')).toBe('haiku 4.5')
+    expect(modelName('claude-opus-5-5')).toBe('opus 5.5')
+    expect(modelName('custom-model')).toBe('custom-model')
+    expect(formatTokens(950)).toBe('950')
+    expect(formatTokens(1234)).toBe('1.2k')
+    expect(formatTokens(12_400)).toBe('12k')
+    expect(formatTokens(1_250_000)).toBe('1.3M')
+  })
+
+  test('fills in the stats an older version did not store', () => {
+    const old = { id: 'a', type: 'Explore', name: 'Explore', task: 'go', report: null }
+    expect(usableAgents([old])[0]).toMatchObject({ model: '', tools: 0, skills: 0, agents: 0, tokens: null })
   })
 
   test('cleans model text and names', () => {

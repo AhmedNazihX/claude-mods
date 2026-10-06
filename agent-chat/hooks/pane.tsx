@@ -1,7 +1,7 @@
 import type { ElementTable } from 'claude-code'
 
 import type { Subagent } from '../types'
-import { colourOf, firstLines, formatDuration } from './feed'
+import { colourOf, firstLines, formatDuration, statsText } from './feed'
 
 type Elements = Pick<ElementTable, 'Box' | 'Text' | 'Markdown' | 'Button'>
 
@@ -80,6 +80,7 @@ const renderCard = (elements: Elements, agent: Subagent, input: PaneInput) => {
         <Text color={colour} bold>{`● ${agent.name}`}</Text>
         <Text color={status.color ?? colour}>{statusText(agent, input.now)}</Text>
       </Box>
+      <Text dimColor>{statsText(agent)}</Text>
       {renderSection(elements, `${agent.id}-task`, `${agent.parent} asked`, agent.task, TASK_LINES, isOpen('task'), toggle('task'))}
       {agent.report === null ? (
         <Text color={colour}>{'⋯ working'}</Text>
