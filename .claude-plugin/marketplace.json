@@ -27,7 +27,7 @@
       "name": "agent-chat",
       "source": "./agent-chat",
       "description": "A side pane with the messages between Claude and its subagents: each task handed over and each report sent back",
-      "version": "0.1.0"
+      "version": "0.2.0"
     }
   ]
 }
