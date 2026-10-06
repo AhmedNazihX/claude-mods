@@ -25,9 +25,36 @@ export const cleanText = (text: string): string =>
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 
+const DESCRIPTION_CHARS = 80
+
+/** Text as one printable line of at most `maxChars`. */
+const oneLine = (text: string, maxChars: number): string => cleanText(text).replace(/\s+/g, ' ').slice(0, maxChars)
+
 /** A subagent's type or given name as one printable line: the model chose it. */
-export const cleanName = (name: string): string =>
-  cleanText(name).replace(/\s+/g, ' ').slice(0, NAME_CHARS) || 'agent'
+export const cleanName = (name: string): string => oneLine(name, NAME_CHARS) || 'agent'
+
+/** The few words the Agent call gave its task, as one printable line. */
+export const cleanDescription = (description: string | undefined): string => oneLine(description ?? '', DESCRIPTION_CHARS)
+
+// Markdown marks a shut card's summary leaves out: it is drawn as plain text.
+const MARKDOWN_MARKS: readonly (readonly [RegExp, string])[] = [
+  [/!?\[([^\]]*)\]\([^)]*\)/g, '$1'],
+  [/^\s*(#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)/gm, ''],
+  [/(\*\*|__|`+|~~)/g, ''],
+]
+
+/**
+ * The start of a report as plain text, its lines run together and cut at a
+ * word to about `maxChars`: what a shut card says came back.
+ */
+export const summaryOf = (report: string, maxChars: number): string => {
+  const plain = MARKDOWN_MARKS.reduce((text, [mark, by]) => text.replace(mark, by), report)
+  const flat = plain.replace(/```[^\n]*/g, '').replace(/\s+/g, ' ').trim()
+  if (flat.length <= maxChars) return flat
+  const cut = flat.slice(0, maxChars)
+  const lastSpace = cut.lastIndexOf(' ')
+  return `${(lastSpace > maxChars / 2 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`
+}
 
 export const colourOf = (colour: number): string => PALETTE[colour % PALETTE.length] ?? PALETTE[0]
 
@@ -48,8 +75,21 @@ export const addAgent = (agents: readonly Subagent[], agent: Subagent): Subagent
 export const finishAgent = (agents: readonly Subagent[], id: string, status: AgentStatus, now: number, report: string): Subagent[] =>
   agents.map(agent => (agent.id === id ? { ...agent, status, endedAt: now, report } : agent))
 
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
+
 export const toggle = (ids: readonly string[], id: string): string[] =>
   ids.includes(id) ? ids.filter(one => one !== id) : [...ids, id]
+
+/**
+ * Whether a card is drawn in full: as the person left it, else open while
+ * its subagent works and shut to its header once it is done.
+ */
+export const isCardOpen = (agent: Subagent, cards: Readonly<Record<string, boolean>>): boolean =>
+  cards[agent.id] ?? agent.status === 'running'
+
+/** The cards' stored states, those that are not a yes or no left out. */
+export const usableCards = (cards: unknown): Record<string, boolean> =>
+  isRecord(cards) ? Object.fromEntries(Object.entries(cards).filter(([, open]) => typeof open === 'boolean')) as Record<string, boolean> : {}
 
 export type Shown = { text: string; hiddenLines: number }
 
@@ -64,8 +104,6 @@ export const firstLines = (text: string, maxLines: number): Shown => {
   const fences = kept.filter(line => line.trimStart().startsWith('```')).length
   return { text: [...kept, ...(fences % 2 === 1 ? ['```'] : [])].join('\n'), hiddenLines: lines.length - maxLines }
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 
 /**
  * The subagents as this version draws them. Stored state outlives a reload
@@ -83,6 +121,7 @@ const asCounts = (value: unknown): TokenCounts | null =>
 /** A stored subagent with the stats an older version did not keep filled in. */
 const withStats = (agent: Subagent): Subagent => ({
   ...agent,
+  description: typeof agent.description === 'string' ? cleanDescription(agent.description) : '',
   model: typeof agent.model === 'string' ? cleanText(agent.model).replace(/\s+/g, ' ') : '',
   tools: count(agent.tools),
   skills: count(agent.skills),
@@ -166,6 +205,12 @@ export const statsText = (agent: Subagent): string =>
     plural(agent.skills, 'skill'),
     plural(agent.agents, 'agent'),
   ]
+    .filter((part): part is string => part !== undefined)
+    .join(' · ')
+
+/** `6 tools · 12k tokens`: a shut card's stats, the tokens once counted. */
+export const briefStatsText = (agent: Subagent): string =>
+  [plural(agent.tools, 'tool'), agent.tokens === null ? undefined : `${formatTokens(totalOf(agent.tokens))} tokens`]
     .filter((part): part is string => part !== undefined)
     .join(' · ')
 

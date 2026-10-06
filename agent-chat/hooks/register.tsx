@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PluginOptions, Register, Timer } from 'claude-code'
 
 import type { Subagent } from '../types'
-import { addAgent, addTokens, cleanName, cleanText, countTool, finishAgent, nameFor, toggle, tokensOf, usableAgents } from './feed'
+import { addAgent, addTokens, cleanDescription, cleanName, cleanText, countTool, finishAgent, nameFor, toggle, tokensOf, usableAgents, usableCards } from './feed'
 import { renderPane } from './pane'
 import { agentResultReport, handbackText, isHandback, rowText } from './reports'
 
@@ -17,6 +17,7 @@ const TICK_MS = 1000
 
 const agents = atom({ plugin: 'agent-chat', key: 'agents' } as const, [] as Subagent[])
 const expanded = atom({ plugin: 'agent-chat', key: 'expanded' } as const, [] as string[])
+const cards = atom({ plugin: 'agent-chat', key: 'cards' } as const, {} as Record<string, boolean>)
 const now = atom({ plugin: 'agent-chat', key: 'now' } as const, 0)
 
 type Settings = { isAutoOpen: boolean; columns: number }
@@ -115,6 +116,7 @@ export const register: Register = (on, options) => {
       id: started.agentId,
       type,
       name: nameFor(known, type, colour),
+      description: cleanDescription(e.description),
       parent: parentAgent?.name ?? 'main',
       colour,
       status: 'running',
@@ -216,6 +218,7 @@ export const register: Register = (on, options) => {
     renderPane($.ui.resolve(e), {
       agents: usableAgents(await read($, agents)),
       expanded: new Set(await read($, expanded)),
+      cards: usableCards(await read($, cards)),
       now: await read($, now),
       columns: e.props.bodyColumns,
       // A desktop draws text in a proportional font, where a ruled line
@@ -223,6 +226,11 @@ export const register: Register = (on, options) => {
       hasRule: e.surface !== 'desktop',
       onToggle: id => {
         update($, expanded, ids => toggle(ids, id)).catch(error => log($, 'could not open the card', error))
+      },
+      onToggleCard: (id, isOpen) => {
+        update($, cards, states => ({ ...usableCards(states), [id]: !isOpen })).catch(error =>
+          log($, isOpen ? 'could not shut the card' : 'could not open the card', error),
+        )
       },
     }),
   )

@@ -2,7 +2,8 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { PALETTE, cleanName, cleanText, firstLines, formatDuration, formatTokens, modelName, nameFor, usableAgents } from './feed'
+import { PALETTE, cleanName, cleanText, firstLines, formatDuration, formatTokens, isCardOpen, modelName, nameFor, summaryOf, usableAgents, usableCards } from './feed'
+import type { Subagent } from '../types'
 
 const SURFACES = ['terminal', 'desktop'] as const
 type Surface = (typeof SURFACES)[number]
@@ -72,6 +73,16 @@ const textOf = async (ui: Mounted) => {
 
 const paneText = async ($: Engine, surface: Surface) => textOf(await mountPane($, surface))
 
+// Opens or shuts a subagent's card, as a click on its header does.
+const pressCard = (ui: Mounted, agentId: string) => ui.press({ key: `${agentId}-card-toggle` } as never)
+
+// The pane's text with the given finished cards opened, as a person reads them.
+const openedText = async ($: Engine, surface: Surface, ...agentIds: string[]) => {
+  const ui = await mountPane($, surface)
+  for (const id of agentIds) await pressCard(ui, id)
+  return textOf(ui)
+}
+
 for (const surface of SURFACES) {
   describe(`the pane (${surface})`, () => {
     test('waits for the first subagent', async ($, on) => {
@@ -91,6 +102,7 @@ for (const surface of SURFACES) {
       expect(working).toContain('⋯ working')
       await clock.advance(22_000)
       await finish($, 'id-Find the band', 'It is drawn in `register.tsx:137`.')
+      await pressCard(ui, 'id-Find the band')
       const done = await textOf(ui)
       expect(done).toContain('0 working · 1 finished')
       expect(done).toContain('done · 22s')
@@ -124,6 +136,7 @@ for (const surface of SURFACES) {
       await spawn($, 'Long')
       await finish($, 'id-Long', Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join('\n'))
       const ui = await mountPane($, surface)
+      await pressCard(ui, 'id-Long')
       const short = await textOf(ui)
       expect(short).toContain('line 6')
       expect(short).not.toContain('line 7')
@@ -153,7 +166,7 @@ for (const surface of SURFACES) {
       await spawn($, 'Hand')
       await $.tool.call({ tool: 'SubagentHandback', report: 'Handed **back**.', agentId: 'id-Hand' } as never)
       await finish($, 'id-Hand', '')
-      const all = await paneText($, surface)
+      const all = await openedText($, surface, 'id-Hand')
       expect(all).toContain('Handed **back**.')
       expect(all).not.toContain('(no text)')
     })
@@ -164,7 +177,7 @@ for (const surface of SURFACES) {
       await spawn($, 'Sync')
       await finish($, 'id-Sync', '')
       await $.tool.call({ tool: 'Agent', prompt: 'go', description: 'Sync', subagent_type: 'Explore' } as never)
-      expect(await paneText($, surface)).toContain('Sync report.')
+      expect(await openedText($, surface, 'id-Sync')).toContain('Sync report.')
     })
 
     test('falls back to the last thing a subagent said', async ($, on) => {
@@ -177,7 +190,7 @@ for (const surface of SURFACES) {
         // Expected: nothing beneath stores the row.
       }
       await finish($, 'id-Quiet', '')
-      expect(await paneText($, surface)).toContain('Last words.')
+      expect(await openedText($, surface, 'id-Quiet')).toContain('Last words.')
     })
 
     test('rules the task off from the report on the terminal only', async ($, on) => {
@@ -185,7 +198,7 @@ for (const surface of SURFACES) {
       engineBeneath(on)
       await spawn($, 'Ruled')
       await finish($, 'id-Ruled', 'Done.')
-      expect((await paneText($, surface)).includes('────')).toBe(surface === 'terminal')
+      expect((await openedText($, surface, 'id-Ruled')).includes('────')).toBe(surface === 'terminal')
     })
 
     test('shows the model and counts tools, skills and agents live, then the tokens', async ($, on) => {
@@ -199,6 +212,7 @@ for (const surface of SURFACES) {
       }
       expect(await textOf(ui)).toContain('haiku 4.5 · 4 tools · 1 skill · 1 agent')
       await finish($, 'id-Counted', 'Done.')
+      await pressCard(ui, 'id-Counted')
       const done = await textOf(ui)
       expect(done).toContain('haiku 4.5 · 4 tools · 1 skill · 1 agent')
       expect(done).toContain('12k tokens · 2k in · 400 out · 10k cache read · 0 cache write')
@@ -219,6 +233,7 @@ for (const surface of SURFACES) {
       await step(1)
       expect(await textOf(ui)).toContain('25k tokens · 4k in · 800 out')
       await finish($, 'id-Live', 'Done.')
+      await pressCard(ui, 'id-Live')
       expect(await textOf(ui)).toContain('25k tokens · 4k in · 800 out')
     })
 
@@ -228,9 +243,53 @@ for (const surface of SURFACES) {
       await spawn($, 'Outer', 'Go.', 'general-purpose')
       await spawn($, 'Inner', 'Look.', 'Explore', 'id-Outer')
       await finish($, 'id-Inner', 'partial', 'aborted')
-      const all = await paneText($, surface)
+      const all = await openedText($, surface, 'id-Inner')
       expect(all).toContain('general-purpose asked')
       expect(all).toContain('stopped · ')
+    })
+
+    test('shuts a finished card to a summary and opens it on a click', async ($, on) => {
+      mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      await spawn($, 'Folded', 'Find it.')
+      await $.tool.call({ tool: 'Read', agentId: 'id-Folded' } as never)
+      await finish($, 'id-Folded', '## Found it\n\nIn **band.tsx**, see `renderBand`.')
+      const ui = await mountPane($, surface)
+      const shut = await textOf(ui)
+      expect(shut).toContain('● Explore')
+      expect(shut).toContain('done · ')
+      expect(shut).toContain('▸')
+      expect(shut).toContain('Folded')
+      expect(shut).toContain('Found it In band.tsx, see renderBand.')
+      expect(shut).toContain('1 tool · 12k tokens')
+      expect(shut).not.toContain('main asked')
+      expect(shut).not.toContain('Explore replied')
+      await pressCard(ui, 'id-Folded')
+      const open = await textOf(ui)
+      expect(open).toContain('▾')
+      expect(open).toContain('main asked')
+      expect(open).toContain('In **band.tsx**, see `renderBand`.')
+      await pressCard(ui, 'id-Folded')
+      expect(await textOf(ui)).not.toContain('Explore replied')
+    })
+
+    test('keeps a running card open, and one shut by hand stays shut when it finishes', async ($, on) => {
+      mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      await spawn($, 'Busy one', 'Work on it.')
+      await spawn($, 'Busy two', 'Work on that.')
+      const ui = await mountPane($, surface)
+      const working = await textOf(ui)
+      expect(working).toContain('Work on it.')
+      expect(working).toContain('Work on that.')
+      await pressCard(ui, 'id-Busy one')
+      expect(await textOf(ui)).not.toContain('Work on it.')
+      await finish($, 'id-Busy one', 'Done one.')
+      await finish($, 'id-Busy two', 'Done two.')
+      await pressCard(ui, 'id-Busy two')
+      const done = await textOf(ui)
+      expect(done).not.toContain('Work on it.')
+      expect(done).toContain('Work on that.')
     })
 
     test('follows the newest card', async ($, on) => {
@@ -268,6 +327,7 @@ describe('helpers', () => {
     id: `${type}${colour}`,
     type,
     name: type,
+    description: '',
     parent: 'main',
     colour,
     status: 'running' as const,
@@ -321,6 +381,27 @@ describe('helpers', () => {
     expect(usableAgents([old])[0]).toMatchObject({ model: '', tools: 0, skills: 0, agents: 0, tokens: null })
     // A count kept as one number has no split, so it is left out.
     expect(usableAgents([{ ...old, tokens: 12_000 }])[0]?.tokens).toBeNull()
+  })
+
+  test('a card is open while its subagent works, shut once done, unless set by hand', () => {
+    const agent = { id: 'a', status: 'running' } as Subagent
+    const done = { ...agent, status: 'done' } as Subagent
+    expect(isCardOpen(agent, {})).toBe(true)
+    expect(isCardOpen(done, {})).toBe(false)
+    expect(isCardOpen(done, { a: true })).toBe(true)
+    expect(isCardOpen(agent, { a: false })).toBe(false)
+  })
+
+  test('summaryOf runs a report together as plain text and cuts it at a word', () => {
+    expect(summaryOf('# Title\n\n- **one** [link](http://x)\n1. `two`', 100)).toBe('Title one link two')
+    expect(summaryOf('alpha beta gamma delta', 12)).toBe('alpha beta…')
+    expect(summaryOf('', 50)).toBe('')
+  })
+
+  test('leaves out card states that are not a yes or no', () => {
+    expect(usableCards({ a: true, b: false, c: 'yes', d: null })).toEqual({ a: true, b: false })
+    expect(usableCards(null)).toEqual({})
+    expect(usableCards('cards')).toEqual({})
   })
 
   test('cleans model text and names', () => {

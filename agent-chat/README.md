@@ -6,28 +6,23 @@ A side pane with the conversations between Claude and its subagents, live: one c
 1 working · 1 finished
 
 ╭──────────────────────────────────────────────────╮
-│ ● Explore                            done · 22s  │
-│ haiku 4.5 · 6 tools · 0 skills · 0 agents        │
-│ 12k tokens · 2k in · 400 out · 10k cache read …  │
-│ main asked                                       │
-│   In cache-status, find where the band above the │
-│   prompt is drawn …                              │
-│ ──────────────────────────────────────────────── │
-│ Explore replied                                  │
-│   I found both: the hook is in register.tsx and  │
-│   the band is built by renderBand in band.tsx.   │
-│   ▾ show 9 more lines                            │
+│ ▸ ● Explore                          done · 22s  │
+│ Find the cache band                              │
+│ I found both: the hook is in register.tsx and    │
+│ the band is built by renderBand in band.tsx. It… │
+│ 6 tools · 12k tokens                             │
 ╰──────────────────────────────────────────────────╯
 ╭──────────────────────────────────────────────────╮
-│ ● Explore                           working · 8s │
+│ ▾ ● Explore                         working · 8s │
 │ haiku 4.5 · 2 tools · 0 skills · 0 agents        │
 │ 4k tokens · 1k in · 200 out · 3k cache read …    │
 │ main asked                                       │
-│   In done-chime, list each hook the mod …        │
+│   In done-chime, list each hook …                │
 │ ⋯ working                                        │
 ╰──────────────────────────────────────────────────╯
 ```
 
+- **A card is open while its subagent works and shuts to a summary once it's done**: the task in a few words, the start of the report as plain text (two lines' worth), and its tools and tokens. Click `▸` to open it in full, `▾` to shut it again. A card you open or shut by hand stays that way, even when its subagent finishes.
 - **One card per subagent**, in the order they started, its border, dot and name in the subagent's colour. Two `Explore` subagents read apart by colour: blue, pink, yellow, violet, cyan, orange, teal, none of them the green and red kept for `done` and `stopped`. Past seven, when a colour comes round again for the same type, the name gets a number (`Explore #2`).
 - **Under the name, what it ran on and did**: its model, its own tool calls (counted live, with the skills it used and the subagents it started among them), and the tokens it went through, on a line of their own: the total, then input, output, and the cache it read and wrote. They count up live, one model request at a time, while the subagent works.
 - **The task and the report are drawn as markdown**, as a reply is: bold, code, lists and links read as they should.

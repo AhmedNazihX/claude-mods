@@ -1,18 +1,22 @@
 import type { ElementTable } from 'claude-code'
 
 import type { Subagent } from '../types'
-import { colourOf, firstLines, formatDuration, statsText, tokensText } from './feed'
+import { briefStatsText, colourOf, firstLines, formatDuration, isCardOpen, statsText, summaryOf, tokensText } from './feed'
 
 type Elements = Pick<ElementTable, 'Box' | 'Text' | 'Markdown' | 'Button'>
 
 export type PaneInput = {
   agents: readonly Subagent[]
   expanded: ReadonlySet<string>
+  /** The cards opened or shut by hand; the rest follow their subagent's status. */
+  cards: Readonly<Record<string, boolean>>
   now: number
   columns: number
   /** Draws a ruled line between the task and the report (the terminal). */
   hasRule: boolean
   onToggle: (id: string) => void
+  /** Opens a shut card or shuts an open one. */
+  onToggleCard: (id: string, isOpen: boolean) => void
 }
 
 // The first lines of a task and of a report; the rest opens with a button,
@@ -23,6 +27,8 @@ const REPORT_LINES = 6
 const MAX_MARKDOWN_CHARS = 10_000
 // Border and padding on each side of a card.
 const CARD_CHROME = 4
+// How many lines of the report a shut card's summary runs to.
+const SUMMARY_LINES = 2
 
 const STATUS = {
   running: { word: 'working', color: undefined },
@@ -67,19 +73,34 @@ const renderSection = (
   )
 }
 
-const renderCard = (elements: Elements, agent: Subagent, input: PaneInput) => {
+/** The card's header: the open-or-shut button, its name, and its status. */
+const renderHeader = ({ Box, Text, Button }: Elements, agent: Subagent, input: PaneInput, isOpen: boolean) => {
+  const colour = colourOf(agent.colour)
+  return (
+    <Box justifyContent="space-between">
+      <Box gap={1}>
+        <Button
+          key={`${agent.id}-card-toggle`}
+          plain
+          dimColor
+          label={isOpen ? '▾' : '▸'}
+          onPress={() => input.onToggleCard(agent.id, isOpen)}
+        />
+        <Text color={colour} bold>{`● ${agent.name}`}</Text>
+      </Box>
+      <Text color={STATUS[agent.status].color ?? colour}>{statusText(agent, input.now)}</Text>
+    </Box>
+  )
+}
+
+/** What an open card shows under its header: stats, the task and the report. */
+const renderBody = (elements: Elements, agent: Subagent, input: PaneInput) => {
   const { Box, Text } = elements
   const colour = colourOf(agent.colour)
-  const status = STATUS[agent.status]
   const toggle = (part: string) => () => input.onToggle(`${agent.id}:${part}`)
   const isOpen = (part: string) => input.expanded.has(`${agent.id}:${part}`)
-
   return (
-    <Box key={agent.id} flexDirection="column" borderStyle="round" borderColor={colour} paddingX={1} marginBottom={1}>
-      <Box justifyContent="space-between">
-        <Text color={colour} bold>{`● ${agent.name}`}</Text>
-        <Text color={status.color ?? colour}>{statusText(agent, input.now)}</Text>
-      </Box>
+    <Box flexDirection="column">
       <Text dimColor>{statsText(agent)}</Text>
       {agent.tokens === null ? null : <Text dimColor>{tokensText(agent)}</Text>}
       {renderSection(elements, `${agent.id}-task`, `${agent.parent} asked`, agent.task, TASK_LINES, isOpen('task'), toggle('task'))}
@@ -96,9 +117,38 @@ const renderCard = (elements: Elements, agent: Subagent, input: PaneInput) => {
 }
 
 /**
+ * What a shut card shows under its header: the task in a few words, the
+ * start of the report, and its tools and tokens.
+ */
+const renderSummary = ({ Box, Text }: Elements, agent: Subagent, input: PaneInput) => {
+  const width = Math.max(input.columns - CARD_CHROME, 10)
+  const summary = agent.report === null ? '⋯ working' : summaryOf(agent.report, width * SUMMARY_LINES)
+  return (
+    <Box flexDirection="column">
+      {agent.description === '' ? null : <Text>{agent.description}</Text>}
+      {summary === '' ? null : <Text dimColor wrap="wrap">{summary}</Text>}
+      <Text dimColor>{briefStatsText(agent)}</Text>
+    </Box>
+  )
+}
+
+/** One subagent's card: its header and a summary when shut, everything when open. */
+const renderCard = (elements: Elements, agent: Subagent, input: PaneInput) => {
+  const { Box } = elements
+  const isOpen = isCardOpen(agent, input.cards)
+  return (
+    <Box key={agent.id} flexDirection="column" borderStyle="round" borderColor={colourOf(agent.colour)} paddingX={1} marginBottom={1}>
+      {renderHeader(elements, agent, input, isOpen)}
+      {isOpen ? renderBody(elements, agent, input) : renderSummary(elements, agent, input)}
+    </Box>
+  )
+}
+
+/**
  * The conversations between Claude and its subagents: one card per
  * subagent in the order they started, in its colour, with the task it was
- * handed and the report it sent back. Every card is drawn; the pane scrolls.
+ * handed and the report it sent back. A finished card shuts to its header
+ * until it is opened; every card is drawn and the pane scrolls.
  */
 export const renderPane = (elements: Elements, input: PaneInput) => {
   const { Box, Text } = elements

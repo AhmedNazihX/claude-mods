@@ -1,7 +1,7 @@
 {
   "name": "agent-chat",
   "version": "0.2.0",
-  "description": "A side pane with the conversation between Claude and its subagents: what each was asked, what it did and said, and what it sent back",
+  "description": "A side pane with the conversation between Claude and its subagents: what each was asked and what it sent back",
   "author": {
     "name": "Ahmed"
   },

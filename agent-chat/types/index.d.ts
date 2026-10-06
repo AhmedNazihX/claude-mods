@@ -7,6 +7,8 @@ export type Subagent = {
   type: string
   /** As the pane names it: the type, with `#2` only when its colour came round again. */
   name: string
+  /** The few words the Agent call gave its task ('' when an older version kept none). */
+  description: string
   /** Who started it: `main`, or another subagent's name. */
   parent: string
   /** Its place in the palette: each subagent of a session gets the next colour. */
@@ -35,8 +37,10 @@ declare module 'claude-code' {
   interface PluginState {
     'agent-chat': {
       agents: Subagent[]
-      /** The ids of the cards the person opened in full. */
+      /** The task and report sections opened past their first lines, as `id:task` and `id:report`. */
       expanded: string[]
+      /** The cards the person opened (true) or shut (false) by hand, by subagent id. */
+      cards: Record<string, boolean>
       /** The time the live timers read, moved on each second while a subagent works. */
       now: number
     }
