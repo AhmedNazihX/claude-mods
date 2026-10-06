@@ -40,6 +40,16 @@ const USAGE = { input_tokens: 2000, output_tokens: 400, cache_read_input_tokens:
 const finish = ($: Engine, agentId: string, answer: string, reason = 'answer') =>
   $.turn.complete({ answer, durationMs: 1, isAborted: reason === 'aborted', turnId: 't', reason, agentId, usage: USAGE } as never)
 
+// Runs a streaming call to its end, whatever form the kit hands it back in.
+const drain = async (call: unknown): Promise<void> => {
+  const stream = await (call as Promise<unknown>)
+  if (stream !== null && typeof stream === 'object' && Symbol.asyncIterator in stream) {
+    for await (const _chunk of stream as AsyncIterable<unknown>) {
+      // Each chunk passes; only the end matters here.
+    }
+  }
+}
+
 const mountPane = ($: Engine, surface: Surface) =>
   $.ui.mount({
     plugin: 'agent-chat',
@@ -192,6 +202,24 @@ for (const surface of SURFACES) {
       const done = await textOf(ui)
       expect(done).toContain('haiku 4.5 · 4 tools · 1 skill · 1 agent')
       expect(done).toContain('12k tokens · 2k in · 400 out · 10k cache read · 0 cache write')
+    })
+
+    test('counts tokens request by request while a subagent works, and not twice at the end', async ($, on) => {
+      mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      // Each model request of the subagent ends with its usage.
+      on('turn.step', async function* ($, e) {
+        return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: { ...USAGE } } as never
+      })
+      await spawn($, 'Live')
+      const ui = await mountPane($, surface)
+      const step = (index: number) => drain($.turn.step({ turnId: 't', index, model: 'haiku', messageCount: 1, agentId: 'id-Live' } as never))
+      await step(0)
+      expect(await textOf(ui)).toContain('12k tokens · 2k in · 400 out')
+      await step(1)
+      expect(await textOf(ui)).toContain('25k tokens · 4k in · 800 out')
+      await finish($, 'id-Live', 'Done.')
+      expect(await textOf(ui)).toContain('25k tokens · 4k in · 800 out')
     })
 
     test('names the subagent that started a nested one, and marks a run cut short', async ($, on) => {

@@ -40,6 +40,9 @@ let nextColour = 0
 // report is the hand-back, else its final text, else the last thing it said.
 const handedBack = new Map<string, string>()
 const lastSaid = new Map<string, string>()
+// The subagents whose tokens are counted request by request as they work;
+// their run's total at the end is the same tokens again, not added twice.
+const countedLive = new Set<string>()
 // Whether the pane follows new messages: true until the person scrolls up,
 // and again once they scroll back to the bottom.
 let isFollowing = true
@@ -159,6 +162,19 @@ export const register: Register = (on, options) => {
     return ran
   })
 
+  // Each model request of a subagent adds its tokens as it ends, so the
+  // count goes up while the subagent works.
+  on('turn.step', async function* ($, e, next) {
+    const result = yield* next(e)
+    const id = e.agentId
+    if (id !== undefined && result.usage !== null && usableAgents(await read($, agents)).some(one => one.id === id)) {
+      countedLive.add(id)
+      const step = tokensOf(result.usage)
+      await update($, agents, list => usableAgents(list).map(one => (one.id === id ? { ...one, tokens: addTokens(one.tokens, step) } : one)))
+    }
+    return result
+  })
+
   // The last thing each subagent said, the report of last resort.
   on('session.append', { door: 'response' }, ($, e, next) => {
     const text = rowText(e.message.content)
@@ -174,10 +190,12 @@ export const register: Register = (on, options) => {
       const report = handedBack.get(agent.id) || e.answer || lastSaid.get(agent.id) || ''
       handedBack.delete(agent.id)
       lastSaid.delete(agent.id)
+      // Counted request by request already, or else from the run's total.
+      const isCounted = countedLive.delete(agent.id)
       const tokens = tokensOf(e.usage)
       const after = await update($, agents, list =>
         finishAgent(usableAgents(list), agent.id, status, time, cleanText(report)).map(one =>
-          one.id === agent.id ? { ...one, tokens: addTokens(one.tokens, tokens), model: one.model || (e.usage === undefined ? '' : cleanName(e.usage.model)) } : one,
+          one.id === agent.id ? { ...one, tokens: isCounted ? one.tokens : addTokens(one.tokens, tokens), model: one.model || (e.usage === undefined ? '' : cleanName(e.usage.model)) } : one,
         ),
       )
       if (!after.some(one => one.status === 'running')) stopTicker()
