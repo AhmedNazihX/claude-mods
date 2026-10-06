@@ -1,6 +1,6 @@
 {
   "name": "done-chime",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Plays a chime and shows a toast when a long Claude reply finishes, so you can look away while it works",
   "author": {
     "name": "Ahmed"

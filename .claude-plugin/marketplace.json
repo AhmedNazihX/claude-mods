@@ -21,7 +21,7 @@
       "name": "done-chime",
       "source": "./done-chime",
       "description": "Chime and toast when a long Claude reply finishes",
-      "version": "0.2.0"
+      "version": "0.3.0"
     },
     {
       "name": "agent-chat",
