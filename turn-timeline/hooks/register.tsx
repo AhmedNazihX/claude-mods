@@ -3,6 +3,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { TimelineCall, TimelineTurn } from '../types'
 import { renderCard } from './card'
+import { callFromResult, toolResultsOf, toolUsesOf } from './results'
+import type { ToolUse } from './results'
 import { summarize } from './summary'
 import type { Places } from './summary'
 import { addCall, endTurn, finishCall, noteOf, outcomeOf, startTurn } from './timeline'
@@ -19,6 +21,8 @@ const REPLY_BULLET = '⏺ '
 
 // A copy of each card the host keeps, so cards outlive a reload of the mod.
 const card = atom({ plugin: 'turn-timeline', key: 'card' } as const, null)
+// The stretch running now, drawn on the working spinner as it grows.
+const liveCard = atom({ plugin: 'turn-timeline', key: 'live' } as const, null)
 
 // The transcript draws a block of reply text as soon as its row is stored
 // and does not draw it again, so its card must be ready at that moment:
@@ -32,6 +36,9 @@ const carded = new Set<string>()
 // Where the running turn's current stretch begins: the calls made since
 // the last block of reply text.
 let stretchFrom = 0
+// The calls the model asked for this turn, by tool_use id: a call that fails
+// before it runs is known only from these and its stored result.
+let uses = new Map<string, ToolUse>()
 // Calls without a tool_use_id still need an id of their own.
 let callCount = 0
 // Where file paths are shown from, read when the session starts.
@@ -72,16 +79,48 @@ const hasText = (content: unknown): boolean =>
   Array.isArray(content) &&
   content.some(block => block?.type === 'text' && typeof block.text === 'string' && block.text.trim() !== '')
 
-// Takes the calls made since the last block of text as a card, or none.
-function takeStretch(): TimelineTurn | undefined {
-  if (live === null) return undefined
+// The calls made since the last block of text, spanning the calls
+// themselves, not the thinking before them; none when there are none.
+function currentStretch(): TimelineTurn | null {
+  if (live === null) return null
   const calls = live.calls.slice(stretchFrom)
-  if (calls.length === 0) return undefined
-  // The card spans the calls themselves, not the thinking before them.
+  if (calls.length === 0) return null
   const startedAt = Math.min(...calls.map(call => call.startedAt))
   const endedAt = Math.max(...calls.map(call => call.endedAt ?? call.startedAt))
+  return { ...live, startedAt, endedAt, calls }
+}
+
+// One call that went fine says nothing a card adds: the bar is all of it.
+const isWorthACard = (stretch: TimelineTurn): boolean =>
+  stretch.calls.length > 1 || stretch.calls.some(call => call.outcome !== 'ok')
+
+// Takes the current stretch as a card, or none, and starts the next one.
+function takeStretch(): TimelineTurn | undefined {
+  const stretch = currentStretch()
+  if (live === null || stretch === null) return undefined
   stretchFrom = live.calls.length
-  return endTurn({ ...live, startedAt, calls }, endedAt)
+  const ended = endTurn(stretch, stretch.endedAt ?? stretch.startedAt)
+  return isWorthACard(ended) ? ended : undefined
+}
+
+// Draws the running stretch on the spinner, or clears it.
+function publishLive($: EngineInterface) {
+  const stretch = currentStretch()
+  update($, liveCard, () => stretch).catch(error =>
+    $.ui.log(`turn-timeline could not update the live card: ${error}`, { to: 'debug' }),
+  )
+}
+
+// Adds the calls a stored result row reports that no `tool.call` saw.
+function addFailedEarly(content: unknown) {
+  if (live === null) return
+  const known = new Set(live.calls.map(call => call.id))
+  const at = Math.max(live.startedAt, ...live.calls.map(call => call.endedAt ?? call.startedAt))
+  for (const result of toolResultsOf(content)) {
+    const use = uses.get(result.id)
+    if (use === undefined || known.has(result.id) || live === null) continue
+    live = addCall(live, callFromResult(result, use, places, at))
+  }
 }
 
 // Keeps a card in memory at once, then a copy with the host for reloads.
@@ -123,14 +162,27 @@ export const register: Register = on => {
     const time = await $.clock.now()
     live = startTurn(e.turnId, time)
     stretchFrom = 0
+    uses = new Map()
+    publishLive($)
     return next(e)
   })
 
   // A block of reply text gets a card for the calls made since the last one.
   on('session.append', { door: 'response' }, ($, e, next) => {
-    if (e.agentId === undefined && e.message.type === 'assistant' && hasText(e.message.content)) {
+    if (e.agentId !== undefined || e.message.type !== 'assistant') return next(e)
+    for (const [id, use] of toolUsesOf(e.message.content)) uses.set(id, use)
+    if (hasText(e.message.content)) {
       const stretch = takeStretch()
       if (stretch !== undefined) keepCard($, e.uuid, textOf(e.message.content), stretch)
+      publishLive($)
+    }
+    return next(e)
+  })
+
+  on('session.append', { door: 'tool-result' }, ($, e, next) => {
+    if (e.agentId === undefined) {
+      addFailedEarly(e.message.content)
+      publishLive($)
     }
     return next(e)
   })
@@ -153,6 +205,7 @@ export const register: Register = on => {
       outcome: 'running',
     }
     live = addCall(live, call)
+    publishLive($)
 
     try {
       const ran = await next(e)
@@ -163,12 +216,17 @@ export const register: Register = on => {
       const endedAt = await $.clock.now()
       if (live !== null) live = finishCall(live, call.id, 'error', endedAt)
       throw error
+    } finally {
+      publishLive($)
     }
   })
 
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined && live !== null) {
       live = endTurn(live, await $.clock.now())
+      update($, liveCard, () => null).catch(error =>
+        $.ui.log(`turn-timeline could not clear the live card: ${error}`, { to: 'debug' }),
+      )
     }
     return next(e)
   })
@@ -181,6 +239,23 @@ export const register: Register = on => {
     if (e.props.isActive || e.props.isExpanded || !isCarded) return next(e)
     const { Box } = $.ui.resolve(e)
     return <Box />
+  })
+
+  // While Claude works, the stretch so far grows on the working spinner;
+  // the spinner is drawn again as it changes, unlike a stored reply.
+  on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
+    const stretch = await read($, liveCard)
+    if (stretch === null) return next(e)
+    const spinner = await next(e)
+    const table = $.ui.resolve(e)
+    const Svg = e.surface === 'desktop' && 'Svg' in table ? table.Svg : undefined
+    const columns = Math.min((e.viewport?.columns ?? DEFAULT_COLUMNS) - MESSAGE_INDENT, MAX_CARD_COLUMNS)
+    return (
+      <table.Box flexDirection="column">
+        {renderCard({ Box: table.Box, Text: table.Text, Svg }, { turn: stretch, columns })}
+        {spinner ?? null}
+      </table.Box>
+    )
   })
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {

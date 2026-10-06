@@ -59,11 +59,18 @@ const mountMessage = ($: Engine, surface: Surface, requestId: string, text = 'Al
 
 // The card's lines, then the reply: drawn by the mod as Markdown when it
 // has a card, else the engine's own line.
+// The text an SVG draws, in order: what its <text> and <tspan> runs hold.
+const svgTexts = (source: string): string[] =>
+  [...source.matchAll(/<text[^>]*>(.*?)<\/text>/g)].map(match =>
+    (match[1] ?? '').replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
+  )
+
 const textsOf = async ($: Engine, surface: Surface, requestId: string, text?: string) => {
   const ui = await mountMessage($, surface, requestId, text)
   const lines = (await ui.findAll({ type: 'Text' })).map(found => found.text).filter(text => text !== '⏺ ')
+  const drawn = (await ui.findAll({ type: 'Svg' as never })).flatMap(found => svgTexts(String(found.props.source)))
   const markdown = (await ui.findAll({ type: 'Markdown' })).map(found => String(found.props.text))
-  return [...lines, ...markdown]
+  return [...drawn, ...lines, ...markdown]
 }
 
 for (const surface of SURFACES) {
@@ -90,7 +97,7 @@ for (const surface of SURFACES) {
     test('finds the card under the id the transcript draws the text with', async ($, on) => {
       const clock = mock.clock(on, { now: 0 })
       engineBeneath(on, clock)
-      await runTurn($, '5c7d2e8d-b25d-43ea-ba24-b34b0a2a29cd', [{ tool: 'Read', file_path: '/a.ts' }])
+      await runTurn($, '5c7d2e8d-b25d-43ea-ba24-b34b0a2a29cd', [{ tool: 'Read', file_path: '/a.ts' }, { tool: 'Read', file_path: '/b.ts' }])
       const texts = await textsOf($, surface, '5c7d2e8d-b25d-43ea-ba24-000000000000')
       expect(texts[0]).toBe('Tool timeline')
     })
@@ -98,7 +105,7 @@ for (const surface of SURFACES) {
     test('leaves out the folded summary line of calls a card shows', async ($, on) => {
       const clock = mock.clock(on, { now: 0 })
       engineBeneath(on, clock)
-      await runTurn($, 'm4', [{ tool: 'Bash', command: 'ls', tool_use_id: 'tu1' }])
+      await runTurn($, 'm4', [{ tool: 'Bash', command: 'ls', tool_use_id: 'tu1' }, { tool: 'Bash', command: 'pwd', tool_use_id: 'tu2' }])
       let mounts = 0
       const group = (ids: string[], isActive = false) =>
         $.ui.mount({
@@ -124,6 +131,13 @@ for (const surface of SURFACES) {
         { tool: 'Bash', command: 'git log -3', description: 'Show recent commits' },
       ])
       const ui = await mountMessage($, surface, 'm5')
+      if (surface === 'desktop') {
+        const [svg] = await ui.findAll({ type: 'Svg' as never })
+        const source = String(svg?.props.source)
+        expect(source).toMatch(/font-style="italic"[^>]*>Search turn-timeline for barSpan/)
+        expect(source).not.toMatch(/font-style="italic"[^>]*>git log -3/)
+        return
+      }
       const found = await ui.findAll({ type: 'Text' })
       const all = found.map(one => one.text).join('|')
       expect(all).toContain('Search turn-timeline for barSpan')
@@ -169,11 +183,67 @@ for (const surface of SURFACES) {
     test('finds the card by its text when the surface names the block another way', async ($, on) => {
       const clock = mock.clock(on, { now: 0 })
       engineBeneath(on, clock)
-      await runTurn($, 'row-8', [{ tool: 'Read', file_path: '/a.ts' }])
+      await runTurn($, 'row-8', [{ tool: 'Read', file_path: '/a.ts' }, { tool: 'Read', file_path: '/b.ts' }])
       // mountMessage draws 'All tests pass.', the text runTurn appended.
       expect((await textsOf($, surface, 'msg_somethingelse'))[0]).toBe('Tool timeline')
       // Taken once: another block with the same words gets no card.
       expect(await textsOf($, surface, 'msg_again')).toEqual(['the reply text'])
+    })
+
+    test('gives one call a card only when it did not go fine', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on, clock)
+      await runTurn($, 'one-ok', [{ tool: 'Read', file_path: '/a.ts' }])
+      expect(await textsOf($, surface, 'one-ok', 'All tests pass.')).toEqual(['the reply text'])
+      await runTurn($, 'one-denied', [{ tool: 'Write', file_path: '/a.ts', content: '' }])
+      expect((await textsOf($, surface, 'one-denied', 'All tests pass.'))[0]).toBe('Tool timeline')
+    })
+
+    test('shows calls that failed before they ran, from their stored rows', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on, clock)
+      await $.turn.start({ turnId: 'te', text: 'go' } as never)
+      await $.tool.call({ tool: 'Read', file_path: '/a.ts', tool_use_id: 'r1' } as never)
+      const store = async (door: string, content: unknown[], uuid: string) => {
+        try {
+          await $.session.append({ message: { type: door === 'response' ? 'assistant' : 'user', content }, door, origin: { kind: 'model' }, uuid } as never)
+        } catch {
+          // Expected: nothing beneath stores the row.
+        }
+      }
+      await store('response', [{ type: 'tool_use', id: 'g1', name: 'Grep', input: { pattern: 'TODO' } }], 'u1')
+      await store('tool-result', [{ type: 'tool_result', tool_use_id: 'g1', is_error: true, content: 'No such tool available: Grep' }], 'u2')
+      await appendReply($, 'after-grep')
+      const all = (await textsOf($, surface, 'after-grep')).join('|')
+      expect(all).toContain('2 calls · ')
+      expect(all).toContain('TODO')
+      expect(all).toContain('failed · No such tool available: Grep')
+    })
+
+    test('grows on the working spinner while Claude works, and clears with the text', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on, clock)
+      let mounts = 0
+      const spinner = async () => {
+        const ui = await $.ui.mount({
+          plugin: 'turn-timeline',
+          surface,
+          component: 'Spinner',
+          requestId: `s${(mounts += 1)}`,
+          props: { word: 'Working', message: null, suffix: '…', mode: 'tool-use' } as never,
+        })
+        const lines = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+        const drawn = (await ui.findAll({ type: 'Svg' as never })).flatMap(found => svgTexts(String(found.props.source)))
+        return [...drawn, ...lines].join('|')
+      }
+      await $.turn.start({ turnId: 'tl', text: 'go' } as never)
+      expect(await spinner()).toBe('the reply text')
+      await $.tool.call({ tool: 'Read', file_path: '/a.ts' } as never)
+      expect(await spinner()).toContain('1 call · ')
+      await $.tool.call({ tool: 'Bash', command: 'ls' } as never)
+      expect(await spinner()).toContain('2 calls · ')
+      await appendReply($, 'live-done')
+      expect(await spinner()).toBe('the reply text')
     })
 
     test('shows why a call failed', async ($, on) => {
@@ -197,13 +267,14 @@ for (const surface of SURFACES) {
       engineBeneath(on, clock)
       await $.turn.start({ turnId: 't', text: 'go' } as never)
       await $.tool.call({ tool: 'Read', file_path: '/a.ts' } as never)
+      await $.tool.call({ tool: 'Read', file_path: '/z.ts' } as never)
       await appendReply($, 'first', 'Read it.')
       await $.tool.call({ tool: 'Bash', command: 'ls' } as never)
       await $.tool.call({ tool: 'Bash', command: 'pwd' } as never)
       await appendReply($, 'second')
-      const first = (await textsOf($, surface, 'first')).join('|')
+      const first = (await textsOf($, surface, 'first', 'Read it.')).join('|')
       const second = (await textsOf($, surface, 'second')).join('|')
-      expect(first).toContain('1 call · ')
+      expect(first).toContain('2 calls · ')
       expect(first).not.toContain('pwd')
       expect(second).toContain('2 calls · 8s')
       expect(second).not.toContain('/a.ts')
@@ -215,6 +286,7 @@ for (const surface of SURFACES) {
       await $.turn.start({ turnId: 't', text: 'go' } as never)
       await appendReply($, 'early', 'Looking first.')
       await $.tool.call({ tool: 'Read', file_path: '/a.ts' } as never)
+      await $.tool.call({ tool: 'Read', file_path: '/b.ts' } as never)
       await appendReply($, 'late')
       await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' } as never)
       expect(await textsOf($, surface, 'early', 'Looking first.')).toEqual(['the reply text'])

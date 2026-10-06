@@ -4,6 +4,7 @@ import type { TimelineCall, TimelineTurn } from '../types'
 import { durationTone, fit, fitStart, formatDuration, sequentialSpans } from './format'
 import type { Span } from './format'
 import { RED, TRACK_HEX, lookOf } from './look'
+import { cardSvg } from './card-svg'
 import { toolLabel } from './summary'
 
 export type CardElements = {
@@ -24,9 +25,6 @@ const MIN_BAR = 6
 const MAX_LABEL_SHARE = 0.5
 // Border and padding on each side.
 const CHROME_COLUMNS = 6
-const BAR_CELL_PX = 7
-const BAR_HEIGHT_PX = 6
-const BAR_RADIUS_PX = 3
 const CHECK = '✓'
 const NO_SPAN: Span = { before: 0, length: 0, after: 0 }
 
@@ -54,23 +52,8 @@ const labelText = (call: TimelineCall, width: number): { tool: string; summary: 
   return { tool, summary: summaryFit(call, width - tool.length - 1) }
 }
 
-const barSvg = (span: Span, fill: string): string => {
-  const width = (span.before + span.length + span.after) * BAR_CELL_PX
-  const x = span.before * BAR_CELL_PX
-  return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${BAR_HEIGHT_PX}" viewBox="0 0 ${width} ${BAR_HEIGHT_PX}">`,
-    `<rect width="${width}" height="${BAR_HEIGHT_PX}" rx="${BAR_RADIUS_PX}" fill="${TRACK_HEX}"/>`,
-    `<rect x="${x}" width="${span.length * BAR_CELL_PX}" height="${BAR_HEIGHT_PX}" rx="${BAR_RADIUS_PX}" fill="${fill}"/>`,
-    '</svg>',
-  ].join('')
-}
-
-const renderBar = ({ Text, Svg }: CardElements, call: TimelineCall, span: Span) => {
+const renderBar = ({ Text }: CardElements, call: TimelineCall, span: Span) => {
   const colour = isBad(call) ? RED : lookOf(call.tool)
-  if (Svg !== undefined) {
-    // The SVG's own size, in CSS pixels; the element's width and height are pixels too.
-    return <Svg key={`${call.id}-bar`} source={barSvg(span, colour.hex)} alt={formatDuration(lengthOf(call))} />
-  }
   return (
     <Text key={`${call.id}-bar`}>
       <Text color={TRACK_HEX}>{'━'.repeat(span.before)}</Text>
@@ -82,6 +65,7 @@ const renderBar = ({ Text, Svg }: CardElements, call: TimelineCall, span: Span) 
 
 // `0.7s ✓` in its tone, or `denied` / `failed` in red, right-aligned.
 const renderRight = ({ Text }: CardElements, call: TimelineCall) => {
+  if (call.outcome === 'running') return <Text color="cyan">{'running'.padStart(RIGHT_COLUMNS - 1)}</Text>
   if (isBad(call)) {
     const word = call.outcome === 'denied' ? 'denied' : 'failed'
     return <Text color={RED.color}>{word.padStart(RIGHT_COLUMNS - 1)}</Text>
@@ -167,7 +151,15 @@ const renderNotes = ({ Box, Text }: CardElements, calls: readonly TimelineCall[]
  * was denied or failed, with what replaced it.
  */
 export const renderCard = (elements: CardElements, { turn, columns }: CardInput) => {
-  const { Box, Text } = elements
+  const { Box, Text, Svg } = elements
+  if (Svg !== undefined) {
+    const drawn = cardSvg(turn, MAX_ROWS)
+    return (
+      <Box marginBottom={1}>
+        <Svg source={drawn.source} alt={drawn.alt} />
+      </Box>
+    )
+  }
   const inner = Math.max(columns - CHROME_COLUMNS, MIN_LABEL + BADGE_COLUMNS + RIGHT_COLUMNS)
   // As wide as the longest label needs, so the bars start right after the text.
   const longest = Math.max(...turn.calls.map(call => `${toolText(call)} ${call.summary}`.length))

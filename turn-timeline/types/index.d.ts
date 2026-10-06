@@ -27,6 +27,8 @@ declare module 'claude-code' {
     'turn-timeline': {
       /** A finished turn's card, keyed by the id of the reply text it sits above. */
       card: StateFamily<TimelineTurn | null>
+      /** The stretch running now, drawn on the working spinner. */
+      live: TimelineTurn | null
     }
   }
 }
