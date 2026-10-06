@@ -44,8 +44,12 @@ const UNSCANNED =
  * secret would. On re-entry the guard did not run and `$` is closed to it, so
  * nothing is logged.
  */
+// Engines from 2.1.292 also ask a `.catch` in a guard's place on re-entry;
+// read as a plain string so the check type-checks on the engines before too.
+const isReentry = (error: HookFailure): boolean => String(error.kind) === 're-entry'
+
 function onUnscanned($: EngineInterface, mode: Mode, path: string, error: HookFailure) {
-  if (error.kind !== 're-entry') {
+  if (!isReentry(error)) {
     $.ui.log(
       `secret-guard: could not scan ${path} (${error.kind}: ${error.message ?? 'no detail'})`,
       { to: 'debug' },
