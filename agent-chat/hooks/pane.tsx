@@ -10,6 +10,8 @@ export type PaneInput = {
   expanded: ReadonlySet<string>
   now: number
   columns: number
+  /** Draws a ruled line between the task and the report (the terminal). */
+  hasRule: boolean
   onToggle: (id: string) => void
 }
 
@@ -82,8 +84,8 @@ const renderCard = (elements: Elements, agent: Subagent, input: PaneInput) => {
       {agent.report === null ? (
         <Text color={colour}>{'⋯ working'}</Text>
       ) : (
-        <Box flexDirection="column">
-          <Text dimColor>{'─'.repeat(Math.max(input.columns - CARD_CHROME, 4))}</Text>
+        <Box flexDirection="column" marginTop={input.hasRule ? 0 : 1}>
+          {input.hasRule ? <Text dimColor>{'─'.repeat(Math.max(input.columns - CARD_CHROME, 4))}</Text> : null}
           {renderSection(elements, `${agent.id}-report`, `${agent.name} replied`, agent.report, REPORT_LINES, isOpen('report'), toggle('report'))}
         </Box>
       )}

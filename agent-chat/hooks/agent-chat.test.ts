@@ -14,7 +14,13 @@ const logged: string[] = []
 // task's description; a run ends with the answer it is given.
 const engineBeneath = (on: On, opened: unknown[] = []) => {
   on('agent.spawn', ($, e) => ({ agentId: `id-${e.description}`, model: 'haiku' }) as never)
-  on('tool.call', () => ({ result: {}, text: 'ok' }) as never)
+  on('tool.call', ($, e) => {
+    // A sync Agent call returns the subagent's report in its result.
+    if (e.tool === 'Agent') {
+      return { result: { agentId: 'id-Sync', content: [], handbackReport: { text: 'Sync report.' } }, text: '' } as never
+    }
+    return { result: {}, text: 'ok' } as never
+  })
   on('turn.complete', ($, e) => ({ text: e.answer }) as never)
   on('ui.open', ($, e) => {
     opened.push(e)
@@ -127,6 +133,47 @@ for (const surface of SURFACES) {
       const all = await paneText($, surface)
       expect(all).not.toContain('sub work')
       expect(all).not.toContain('main work')
+    })
+
+    test('takes the report a subagent hands back through its tool, when its final text is empty', async ($, on) => {
+      mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      await spawn($, 'Hand')
+      await $.tool.call({ tool: 'SubagentHandback', report: 'Handed **back**.', agentId: 'id-Hand' } as never)
+      await finish($, 'id-Hand', '')
+      const all = await paneText($, surface)
+      expect(all).toContain('Handed **back**.')
+      expect(all).not.toContain('(no text)')
+    })
+
+    test('takes the report a sync Agent call returns', async ($, on) => {
+      mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      await spawn($, 'Sync')
+      await finish($, 'id-Sync', '')
+      await $.tool.call({ tool: 'Agent', prompt: 'go', description: 'Sync', subagent_type: 'Explore' } as never)
+      expect(await paneText($, surface)).toContain('Sync report.')
+    })
+
+    test('falls back to the last thing a subagent said', async ($, on) => {
+      mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      await spawn($, 'Quiet')
+      try {
+        await $.session.append({ message: { type: 'assistant', role: 'assistant', content: [{ type: 'text', text: 'Last words.' }] }, door: 'response', origin: { kind: 'model' }, uuid: 'u1', agentId: 'id-Quiet' } as never)
+      } catch {
+        // Expected: nothing beneath stores the row.
+      }
+      await finish($, 'id-Quiet', '')
+      expect(await paneText($, surface)).toContain('Last words.')
+    })
+
+    test('rules the task off from the report on the terminal only', async ($, on) => {
+      mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      await spawn($, 'Ruled')
+      await finish($, 'id-Ruled', 'Done.')
+      expect((await paneText($, surface)).includes('────')).toBe(surface === 'terminal')
     })
 
     test('names the subagent that started a nested one, and marks a run cut short', async ($, on) => {

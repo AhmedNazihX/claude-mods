@@ -4,6 +4,7 @@ import type { EngineInterface, PluginOptions, Register, Timer } from 'claude-cod
 import type { Subagent } from '../types'
 import { addAgent, cleanName, cleanText, finishAgent, nameFor, toggle, usableAgents } from './feed'
 import { renderPane } from './pane'
+import { agentResultReport, handbackText, isHandback, rowText } from './reports'
 
 const PANE = 'agent-chat'
 const PANE_TITLE = 'Agent chat'
@@ -35,6 +36,10 @@ let hasAutoOpened = false
 // The next subagent's colour. Taken in one step as a subagent starts, so two
 // started together cannot both read the same count before either is kept.
 let nextColour = 0
+// What each running subagent said last and handed back, by its id: its
+// report is the hand-back, else its final text, else the last thing it said.
+const handedBack = new Map<string, string>()
+const lastSaid = new Map<string, string>()
 // Whether the pane follows new messages: true until the person scrolls up,
 // and again once they scroll back to the bottom.
 let isFollowing = true
@@ -125,12 +130,41 @@ export const register: Register = (on, options) => {
   })
 
   // The subagent's run ends: its report goes back.
+  // A subagent hands its report back through a tool; a sync Agent call
+  // returns it in its result. Either fills a report its final text left empty.
+  on('tool.call', async ($, e, next) => {
+    if (e.agentId !== undefined && isHandback(e.tool)) {
+      const text = handbackText(e)
+      if (text.trim() !== '') handedBack.set(e.agentId, text)
+    }
+    const ran = await next(e)
+    if (e.agentId === undefined && e.tool === 'Agent') {
+      const { agentId, text } = agentResultReport((ran as { result?: unknown }).result)
+      if (agentId !== undefined && text.trim() !== '') {
+        await update($, agents, list =>
+          usableAgents(list).map(one => (one.id === agentId && !one.report ? { ...one, report: cleanText(text) } : one)),
+        )
+      }
+    }
+    return ran
+  })
+
+  // The last thing each subagent said, the report of last resort.
+  on('session.append', { door: 'response' }, ($, e, next) => {
+    const text = rowText(e.message.content)
+    if (e.agentId !== undefined && text.trim() !== '') lastSaid.set(e.agentId, text)
+    return next(e)
+  })
+
   on('turn.complete', async ($, e, next) => {
     const agent = e.agentId === undefined ? undefined : usableAgents(await read($, agents)).find(one => one.id === e.agentId)
     if (agent !== undefined) {
       const time = await $.clock.now()
       const status = e.reason === 'answer' ? 'done' : 'failed'
-      const after = await update($, agents, list => finishAgent(usableAgents(list), agent.id, status, time, cleanText(e.answer)))
+      const report = handedBack.get(agent.id) || e.answer || lastSaid.get(agent.id) || ''
+      handedBack.delete(agent.id)
+      lastSaid.delete(agent.id)
+      const after = await update($, agents, list => finishAgent(usableAgents(list), agent.id, status, time, cleanText(report)))
       if (!after.some(one => one.status === 'running')) stopTicker()
       followNewest($)
     }
@@ -151,6 +185,9 @@ export const register: Register = (on, options) => {
       expanded: new Set(await read($, expanded)),
       now: await read($, now),
       columns: e.props.bodyColumns,
+      // A desktop draws text in a proportional font, where a ruled line
+      // of characters runs past the card; it gets spacing instead.
+      hasRule: e.surface !== 'desktop',
       onToggle: id => {
         update($, expanded, ids => toggle(ids, id)).catch(error => log($, 'could not open the card', error))
       },
