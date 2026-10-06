@@ -2,11 +2,9 @@ import type { CallOutcome, TimelineCall, TimelineTurn } from '../types'
 import { printable } from './summary'
 
 const MAX_CALLS = 500
-const MAX_PROMPT_CHARS = 80
 
-export const startTurn = (id: string, prompt: string, now: number): TimelineTurn => ({
+export const startTurn = (id: string, now: number): TimelineTurn => ({
   id,
-  prompt: printable(prompt).slice(0, MAX_PROMPT_CHARS),
   startedAt: now,
   endedAt: null,
   calls: [],
@@ -22,9 +20,12 @@ export const finishCall = (
   id: string,
   outcome: CallOutcome,
   now: number,
+  note?: string,
 ): TimelineTurn => ({
   ...turn,
-  calls: turn.calls.map(call => (call.id === id ? { ...call, outcome, endedAt: now } : call)),
+  calls: turn.calls.map(call =>
+    call.id === id ? { ...call, outcome, endedAt: now, ...(note === undefined ? {} : { note }) } : call,
+  ),
 })
 
 /**
@@ -39,14 +40,36 @@ export const endTurn = (turn: TimelineTurn, now: number): TimelineTurn => ({
   ),
 })
 
-export type ToolResultLike = { deny?: unknown; isError?: unknown }
+export type ToolResultLike = { deny?: unknown; isError?: unknown; text?: unknown }
+
+// A call a settings hook blocked, or the person refused at the permission
+// prompt, comes back as an error; its text says which.
+const REFUSED = [/hook error:/i, /^\s*BLOCKED\b/i, /doesn't want to proceed/i, /permission .*denied/i]
 
 export const outcomeOf = (result: ToolResultLike): CallOutcome => {
   if (typeof result.deny === 'string') return 'denied'
-  return result.isError === true ? 'error' : 'ok'
+  if (result.isError !== true) return 'ok'
+  const text = typeof result.text === 'string' ? result.text : ''
+  return REFUSED.some(pattern => pattern.test(text)) ? 'denied' : 'error'
 }
 
-/** How many calls each tool made, most first: `Bash 8 · Edit 3 · Read 1`. */
-export const toolCounts = (calls: readonly TimelineCall[]): [string, number][] =>
-  [...calls.reduce((counts, call) => counts.set(call.tool, (counts.get(call.tool) ?? 0) + 1), new Map<string, number>())]
-    .sort((a, b) => b[1] - a[1])
+const MAX_REASON_CHARS = 60
+
+/**
+ * Why a call was denied or failed, cut to its gist for the card's note:
+ * the first line, without a hook's `PreToolUse:Bash hook error: [path]:`
+ * and `BLOCKED:` prefixes or the quoted command the row already shows,
+ * up to the end of its first sentence.
+ */
+export const noteOf = (result: ToolResultLike): string | undefined => {
+  const reason = typeof result.deny === 'string' ? result.deny : result.isError === true ? result.text : undefined
+  if (typeof reason !== 'string') return undefined
+  const firstLine = reason.split('\n').map(printable).find(line => line !== '')
+  if (firstLine === undefined) return undefined
+  const stripped = firstLine
+    .replace(/^.*?hook error: \[[^\]]*\]:\s*/i, '')
+    .replace(/^BLOCKED:\s*/i, '')
+    .replace(/^(['"`]).*?\1\s*/, '')
+  const gist = (stripped.split(/(?<=\.)\s/)[0] ?? '').replace(/\.$/, '').trim()
+  return (gist === '' ? firstLine : gist).slice(0, MAX_REASON_CHARS)
+}

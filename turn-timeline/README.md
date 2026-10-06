@@ -1,55 +1,30 @@
 # turn-timeline
 
-A live side pane listing every tool call of the current reply: what ran, when, how long it took and how it ended.
+A **Tool timeline** card above each of Claude's replies: every tool call it made, where each one fell in the turn, how long it took and how it ended.
 
 ```
-◌ running 6 calls · 1m 12s
-“fix the failing test”
-✓  +0:00    0.3s Read       hooks/band.tsx
-✓  +0:01     42s Bash       Run the tests
-✗  +0:43    1.2s WebFetch   docs.anthropic.com
-⊘  +0:45    0.0s Write      x.ts
-✓  +0:46    0.4s ↳Read      ~/notes/format.ts
-◌  +0:47      9s Bash       npm run lint
-Read 2 · Bash 2 · WebFetch 1 · Write 1
+╭───────────────────────────────────────────────────────────────────╮
+│  Tool timeline                                     4 calls · 8.9s │
+│                                                                   │
+│   R  Read package.json   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   0.2s ✓  │
+│   $  Bash rm -rf dist    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   denied  │
+│   $  Bash trash dist     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   0.3s ✓  │
+│   $  Bash bun test       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   8.4s ✓  │
+│                                                                   │
+│  ╭─────────────────────────────────────────────────────────────╮  │
+│  │ ⊘ rm -rf dist → trash dist             denied · use the trash │  │
+│  ╰─────────────────────────────────────────────────────────────╯  │
+╰───────────────────────────────────────────────────────────────────╯
 ```
 
-## Reading the pane
+## Reading the card
 
 | Part | Meaning |
 |---|---|
-| `✓` `◌` `✗` `⊘` | done, running, failed, blocked (by a hook or a permission) |
-| `+0:43` | when the call started, counted from your message |
-| `42s` | how long it took; yellow from 30s, red from 2 minutes. Running calls count up live |
-| `↳Read` | a call made by a subagent |
-| `hooks/band.tsx` | for file tools, the path: from the project folder, `~/…` elsewhere in your home folder, otherwise in full. A long path is cut from the left (`…/hooks/band.tsx`) so the file name stays |
-| last line | how many calls each tool made |
+| Badge | The tool: `R` Read, `W` Write, `E` Edit, `$` Bash, `?` Grep, `*` Glob, `@` web, `A` subagent, `S` skill, `M` MCP |
+| Text | What the call did: the command it ran (or Claude's description of it when the command is too long to read), the search, or the file path (from the project folder, `~/…` elsewhere in your home folder). `↳` marks a call made by a subagent |
+| Bar | The calls laid end to end across the bar: each coloured part is one call's share of the total time, so the slow ones stand out. Time spent thinking between calls is left out. Red when it was denied or failed |
+| Right | How long it took, with `✓` (yellow from 30s, red from 2 minutes), or `denied` / `failed` |
+| Red box | Every denied or failed call on the card, why it didn't run (cut to its gist), and what ran in its place (`→`) when the very next call was the same tool and worked |
 
-The header shows whether the reply is still running, its number of calls and its total time, with your message under it. The last reply stays on screen until you send the next one. In a short pane the oldest calls scroll off (`… 4 earlier`).
-
-## Opening it
-
-It opens by itself when a session starts, once the window is wide enough (144 columns). Otherwise type `/timeline`.
-
-## Settings
-
-In `/config`:
-
-| Setting | Default | |
-|---|---|---|
-| Open at session start | on | Off: open it with `/timeline` only. |
-| Pane width (columns) | `60` | How wide it docks beside the conversation (30 to 120). |
-| Pane height (rows) | `12` | How tall it is above the prompt (5 to 40). |
-
-A size you drag the pane to wins over these.
-
-## What it does and doesn't do
-
-It watches tool calls and turn starts and ends, and draws the pane. It doesn't change, block or delay any call, and it makes no network calls and touches no files.
-
-## Development
-
-```
-claude plugin validate .
-claude plugin test .
-```
+Each block of Claude's text gets a card for the tool calls made since the block before it, so a reply that works in stretches ("Let me check…", tools, "Now the fix…", tools, the answer) has a card above each stretch's text. Cards stay in the conversation as you scroll back. Text with no tool calls before it gets no card. A long turn shows its last 12 calls (`… 8 earlier`). On the desktop app the bars are drawn as shapes. Claude Code's own folded summary line (`Ran 2 shell commands`) is left out when a card shows the same calls; ctrl+o still shows every call.

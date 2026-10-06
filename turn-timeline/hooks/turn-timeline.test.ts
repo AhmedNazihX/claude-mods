@@ -2,112 +2,218 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { fit, fitStart, formatDuration, formatOffset } from './format'
-import { toSettings } from './settings'
+import { fit, fitStart, formatDuration, sequentialSpans } from './format'
+import { lookOf } from './look'
 import { displayPath, printable, summarize, toolLabel } from './summary'
-import { addCall, endTurn, finishCall, outcomeOf, startTurn, toolCounts } from './timeline'
+import { addCall, endTurn, finishCall, noteOf, outcomeOf, startTurn } from './timeline'
 
 const SURFACES = ['terminal', 'desktop'] as const
 type Surface = (typeof SURFACES)[number]
 
-const PANE_PROPS = { title: 'Turn timeline', isFocused: false, bodyColumns: 80, placement: 'dock' }
-
-// The engine beneath the mod: a turn starts and ends, and each tool call is
-// answered after the mocked clock moves on, or refused for one tool.
+// The engine beneath the mod: a turn starts and ends, rows are kept, each
+// tool call is answered after the mocked clock moves on (Write is refused),
+// and a reply message draws as one line of text.
 const engineBeneath = (on: On, clock: { advance: (ms: number) => Promise<void> }) => {
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
   on('turn.complete', ($, e) => ({ text: e.answer }))
   on('tool.call', async ($, e) => {
-    if (e.tool === 'Write') return { deny: 'not here' }
-    await clock.advance(e.tool === 'Bash' ? 42_000 : 300)
-    return { result: {}, text: 'ok', isError: e.tool === 'WebFetch' } as never
+    const isRmRf = e.tool === 'Bash' && String((e as { command?: unknown }).command).includes('rm -rf')
+    if (e.tool === 'Write' || isRmRf) return { deny: 'use the trash' }
+    await clock.advance(e.tool === 'Bash' ? 4_000 : 200)
+    return { result: {}, text: 'Exit code 1', isError: e.tool === 'WebFetch' } as never
   })
+  on('ui.render', () => h('Text', {}, 'the reply text') as never)
 }
 
-const startReply = ($: Engine, text = 'fix the failing test') =>
-  $.turn.start({ turnId: 't1', text } as never)
+// The kit has no transcript to store rows in, so the append itself fails
+// beneath the mod; the mod has noted the row's id by then.
+const appendReply = async ($: Engine, uuid: string, text = 'All tests pass.') => {
+  try {
+    await $.session.append({
+      message: { type: 'assistant', role: 'assistant', content: [{ type: 'text', text }] },
+      door: 'response',
+      origin: { kind: 'model' },
+      uuid,
+    } as never)
+  } catch {
+    // Expected: nothing beneath stores the row.
+  }
+}
 
-const endReply = ($: Engine) =>
-  $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as never)
+const runTurn = async ($: Engine, uuid: string, calls: Record<string, unknown>[]) => {
+  await $.turn.start({ turnId: `t-${uuid}`, text: 'go' } as never)
+  for (const call of calls) await $.tool.call(call as never)
+  await appendReply($, uuid)
+  await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: `t-${uuid}`, reason: 'answer' } as never)
+}
 
-const paneText = async ($: Engine, surface: Surface, rows = 24) => {
-  const ui = await $.ui.mount({
+const mountMessage = ($: Engine, surface: Surface, requestId: string, text = 'All tests pass.') =>
+  $.ui.mount({
     plugin: 'turn-timeline',
     surface,
-    component: 'Pane',
-    requestId: 'turn-timeline',
-    props: PANE_PROPS as never,
-    viewport: { columns: 80, rows } as never,
+    component: 'AssistantMessage',
+    requestId,
+    props: { text, isFirstOfReply: true } as never,
+    viewport: { columns: 90, rows: 30 } as never,
   })
-  const texts = await ui.findAll({ type: 'Text' })
-  return texts.map(found => found.text).join('|')
+
+// The card's lines, then the reply: drawn by the mod as Markdown when it
+// has a card, else the engine's own line.
+const textsOf = async ($: Engine, surface: Surface, requestId: string, text?: string) => {
+  const ui = await mountMessage($, surface, requestId, text)
+  const lines = (await ui.findAll({ type: 'Text' })).map(found => found.text).filter(text => text !== '⏺ ')
+  const markdown = (await ui.findAll({ type: 'Markdown' })).map(found => String(found.props.text))
+  return [...lines, ...markdown]
 }
 
 for (const surface of SURFACES) {
-  describe(`the pane (${surface})`, () => {
-    test('waits for the first reply', async ($, on) => {
+  describe(`the card (${surface})`, () => {
+    test('sits above the reply text with each call, its time and how it ended', async ($, on) => {
       const clock = mock.clock(on, { now: 0 })
       engineBeneath(on, clock)
-      expect(await paneText($, surface)).toContain('No reply yet')
+      await runTurn($, 'm1', [
+        { tool: 'Read', file_path: '/app/package.json' },
+        { tool: 'Write', file_path: '/app/x.ts', content: '' },
+        { tool: 'Bash', command: 'bun test', description: 'bun test' },
+      ])
+      const texts = await textsOf($, surface, 'm1')
+      const all = texts.join('|')
+      expect(texts[0]).toBe('Tool timeline')
+      expect(all).toContain('3 calls · 4s')
+      expect(all).toContain('/app/package.json')
+      expect(all).toContain('denied')
+      expect(all).toContain('denied · use the trash')
+      expect(all).toMatch(/\s4s/)
+      expect(texts[texts.length - 1]).toBe('All tests pass.')
     })
 
-    test('lists each call with its outcome, offset, length and what it did', async ($, on) => {
+    test('finds the card under the id the transcript draws the text with', async ($, on) => {
       const clock = mock.clock(on, { now: 0 })
       engineBeneath(on, clock)
-      await startReply($)
-      await $.tool.call({ tool: 'Read', file_path: '/app/src/band.tsx' } as never)
-      await $.tool.call({ tool: 'Bash', command: 'npm test', description: 'Run the tests' } as never)
-      await $.tool.call({ tool: 'WebFetch', url: 'https://example.com/docs', prompt: 'read' } as never)
-      await $.tool.call({ tool: 'Write', file_path: '/app/x.ts', content: '' } as never)
-      await endReply($)
-      const text = await paneText($, surface)
-      expect(text).toContain('✓ done ')
-      expect(text).toContain('4 calls')
-      expect(text).toContain('“fix the failing test”')
-      expect(text).toMatch(/✓ \|\s*\+0:00 \|\s*0\.3s \|Read\s+\|\/app\/src\/band\.tsx/)
-      expect(text).toMatch(/✓ \|\s*\+0:00 \|\s*42s \|Bash\s+\|Run the tests/)
-      expect(text).toContain('✗ ')
-      expect(text).toContain('⊘ ')
-      expect(text).toContain('Read 1 · Bash 1 · WebFetch 1 · Write 1')
+      await runTurn($, '5c7d2e8d-b25d-43ea-ba24-b34b0a2a29cd', [{ tool: 'Read', file_path: '/a.ts' }])
+      const texts = await textsOf($, surface, '5c7d2e8d-b25d-43ea-ba24-000000000000')
+      expect(texts[0]).toBe('Tool timeline')
     })
 
-    test('shows file paths from the project folder', async ($, on) => {
+    test('leaves out the folded summary line of calls a card shows', async ($, on) => {
       const clock = mock.clock(on, { now: 0 })
       engineBeneath(on, clock)
-      mock.env(on, { HOME: '/Users/me' })
-      on('session.start', ($, e) => ({ cwd: e.cwd }))
-      on('command.register', () => ({ value: undefined }) as never)
-      on('ui.open', () => ({ value: { isPlaced: true } }) as never)
-      await $.session.start({ cwd: '/Users/me/Workspace/app', surface, isInteractive: true } as never)
-      await startReply($)
-      await $.tool.call({ tool: 'Edit', file_path: '/Users/me/Workspace/app/hooks/band.tsx' } as never)
-      await $.tool.call({ tool: 'Read', file_path: '/Users/me/Workspace/other/hooks/band.tsx' } as never)
-      const text = await paneText($, surface)
-      expect(text).toContain('|hooks/band.tsx')
-      expect(text).toContain('|~/Workspace/other/hooks/band.tsx')
+      await runTurn($, 'm4', [{ tool: 'Bash', command: 'ls', tool_use_id: 'tu1' }])
+      let mounts = 0
+      const group = (ids: string[], isActive = false) =>
+        $.ui.mount({
+          plugin: 'turn-timeline',
+          surface,
+          component: 'ToolGroup',
+          requestId: `g${(mounts += 1)}`,
+          props: { calls: ids.map(id => ({ tool_use_id: id, tool: 'Bash', input: {}, isRunning: false, isErrored: false, isInterrupted: false })), isActive, isExpanded: false } as never,
+        })
+      const textOf = async (ids: string[], isActive?: boolean) =>
+        (await (await group(ids, isActive)).findAll({ type: 'Text' })).map(found => found.text)
+      expect(await textOf(['tu1'])).toEqual([])
+      expect(await textOf(['tu1'], true)).toEqual(['the reply text'])
+      expect(await textOf(['tu1', 'other'])).toEqual(['the reply text'])
     })
 
-    test('shows a running reply and marks subagent calls', async ($, on) => {
+    test('shows the description when the command is too long to read', async ($, on) => {
       const clock = mock.clock(on, { now: 0 })
       engineBeneath(on, clock)
-      await startReply($)
-      await $.tool.call({ tool: 'Read', file_path: '/a/b.ts', agentId: 'sub1' } as never)
-      const text = await paneText($, surface)
-      expect(text).toContain('◌ running ')
-      expect(text).toContain('↳Read')
+      const long = `grep -rn --exclude='.env*' "barSpan" . ; echo "exit=$?" ${'x'.repeat(80)}`
+      await runTurn($, 'm5', [
+        { tool: 'Bash', command: long, description: 'Search turn-timeline for barSpan' },
+        { tool: 'Bash', command: 'git log -3', description: 'Show recent commits' },
+      ])
+      const all = (await textsOf($, surface, 'm5')).join('|')
+      expect(all).toContain('Search turn-timeline for barSpan')
+      expect(all).toContain('git log -3')
+      expect(all).not.toContain('Show recent commits')
     })
 
-    test('keeps the newest calls when the pane is short', async ($, on) => {
+    test('notes every refusal and links only a direct replacement', async ($, on) => {
       const clock = mock.clock(on, { now: 0 })
       engineBeneath(on, clock)
-      await startReply($)
-      for (const name of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) {
-        await $.tool.call({ tool: 'Read', file_path: `/x/${name}.ts` } as never)
-      }
-      const text = await paneText($, surface, 8)
-      expect(text).toContain('… 4 earlier')
-      expect(text).toContain('g.ts')
-      expect(text).not.toContain('a.ts')
+      await runTurn($, 'm6', [
+        { tool: 'Write', file_path: '/a/one.ts', content: '' },
+        { tool: 'Write', file_path: '/a/two.ts', content: '' },
+        { tool: 'Read', file_path: '/a/between.ts' },
+        { tool: 'Write', file_path: '/a/three.ts', content: '' },
+        { tool: 'Write', file_path: '/a/four.ts', content: '' },
+        { tool: 'Write', file_path: '/a/five.ts', content: '' },
+      ])
+      const all = (await textsOf($, surface, 'm6')).join('|')
+      for (const name of ['one', 'two', 'three', 'four', 'five']) expect(all).toContain(`/a/${name}.ts`)
+      expect(all).not.toContain('more')
+      // Write after Write was refused too, and a Read sits between: no arrow anywhere.
+      expect(all).not.toContain('→')
+    })
+
+    test('links a refused call to the same tool run right after it', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on, clock)
+      await runTurn($, 'm7', [
+        { tool: 'Write', file_path: '/a/x.ts', content: '' },
+        { tool: 'Bash', command: 'rm -rf dist' },
+        { tool: 'Bash', command: 'trash dist' },
+      ])
+      const all = (await textsOf($, surface, 'm7')).join('|')
+      expect(all).toContain('→ trash dist')
+      // The refused Write is followed by a Bash call: a different tool, so no arrow.
+      expect(all).not.toMatch(/x\.ts[^|]*→/)
+    })
+
+    test('finds the card by its text when the surface names the block another way', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on, clock)
+      await runTurn($, 'row-8', [{ tool: 'Read', file_path: '/a.ts' }])
+      // mountMessage draws 'All tests pass.', the text runTurn appended.
+      expect((await textsOf($, surface, 'msg_somethingelse'))[0]).toBe('Tool timeline')
+      // Taken once: another block with the same words gets no card.
+      expect(await textsOf($, surface, 'msg_again')).toEqual(['the reply text'])
+    })
+
+    test('shows why a call failed', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on, clock)
+      await runTurn($, 'm2', [{ tool: 'WebFetch', url: 'https://example.com/a', prompt: 'x' }])
+      const all = (await textsOf($, surface, 'm2')).join('|')
+      expect(all).toContain('failed · Exit code 1')
+    })
+
+    test('leaves other messages and turns without tool calls alone', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on, clock)
+      await runTurn($, 'm3', [])
+      expect(await textsOf($, surface, 'm3')).toEqual(['the reply text'])
+      expect(await textsOf($, surface, 'other', 'Something else.')).toEqual(['the reply text'])
+    })
+
+    test('gives each block of text the calls made since the last one', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on, clock)
+      await $.turn.start({ turnId: 't', text: 'go' } as never)
+      await $.tool.call({ tool: 'Read', file_path: '/a.ts' } as never)
+      await appendReply($, 'first', 'Read it.')
+      await $.tool.call({ tool: 'Bash', command: 'ls' } as never)
+      await $.tool.call({ tool: 'Bash', command: 'pwd' } as never)
+      await appendReply($, 'second')
+      const first = (await textsOf($, surface, 'first')).join('|')
+      const second = (await textsOf($, surface, 'second')).join('|')
+      expect(first).toContain('1 call · ')
+      expect(first).not.toContain('pwd')
+      expect(second).toContain('2 calls · 8s')
+      expect(second).not.toContain('/a.ts')
+    })
+
+    test('no card on text before any tool ran', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on, clock)
+      await $.turn.start({ turnId: 't', text: 'go' } as never)
+      await appendReply($, 'early', 'Looking first.')
+      await $.tool.call({ tool: 'Read', file_path: '/a.ts' } as never)
+      await appendReply($, 'late')
+      await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' } as never)
+      expect(await textsOf($, surface, 'early', 'Looking first.')).toEqual(['the reply text'])
+      expect((await textsOf($, surface, 'late'))[0]).toBe('Tool timeline')
     })
   })
 }
@@ -115,8 +221,12 @@ for (const surface of SURFACES) {
 describe('summaries', () => {
   test('say what each tool did', () => {
     const text = (tool: string, input: Record<string, unknown>) => summarize(tool, input).text
-    expect(text('Bash', { command: 'npm run lint', description: 'Lint the app' })).toBe('Lint the app')
+    expect(text('Bash', { command: 'npm run lint', description: 'Lint the app' })).toBe('npm run lint')
     expect(text('Bash', { command: 'git   status\n--short' })).toBe('git status --short')
+    expect(text('Bash', { command: 'cd ~/Workspace/claude-mods && sleep 3 && git log -3' })).toBe('sleep 3 && git log -3')
+    expect(text('Bash', { command: 'cd "/a b"; cd sub && grep -r TODO .' })).toBe('grep -r TODO .')
+    expect(text('Bash', { command: 'cd /tmp' })).toBe('cd /tmp')
+    expect(text('Bash', { description: 'List files' })).toBe('List files')
     expect(text('Grep', { pattern: 'useEffect' })).toBe('useEffect')
     expect(text('WebFetch', { url: 'https://docs.anthropic.com/en/x' })).toBe('docs.anthropic.com')
     expect(text('Agent', { description: 'Survey work', prompt: '…' })).toBe('Survey work')
@@ -137,7 +247,6 @@ describe('summaries', () => {
     expect(summarize('Bash', { command: `echo ${esc}[2J${esc}]0;pwned${bell}hi` }).text).toBe('echo [2J]0;pwnedhi')
     expect(summarize('Edit', { file_path: `/a/${esc}[2Jb.ts` }).text).toBe('/a/[2Jb.ts')
     expect(printable(`a${esc}[31mb\tc`)).toBe('a[31mb c')
-    expect(startTurn('t', `fix ${esc}[1mthis`, 0).prompt).toBe('fix [1mthis')
   })
 
   test('shorten MCP tool names', () => {
@@ -147,37 +256,25 @@ describe('summaries', () => {
   })
 })
 
-describe('the settings', () => {
-  test('open a modest pane by default', () => {
-    expect(toSettings()).toEqual({ isAutoOpen: true, columns: 60, rows: 12 })
-  })
-
-  test('keep sizes in range', () => {
-    expect(toSettings({ paneColumns: 500, paneRows: 1 })).toMatchObject({ columns: 120, rows: 5 })
-    expect(toSettings({ paneColumns: 'wide' })).toMatchObject({ columns: 60 })
-  })
-})
-
-describe('opening the pane', () => {
-  test('asks for the configured size', { options: { paneColumns: 48, paneRows: 10 } }, async ($, on) => {
-    const opened: unknown[] = []
-    on('command.register', () => ({ value: undefined }) as never)
-    on('ui.open', ($, e) => {
-      opened.push(e)
-      return { value: { isPlaced: true } } as never
-    })
-    on('session.start', ($, e) => ({ cwd: e.cwd }))
-    await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true } as never)
-    expect(opened).toEqual([expect.objectContaining({ id: 'turn-timeline', columns: 48, rows: 10 })])
-  })
-})
-
 describe('formatting', () => {
   test('durations and offsets', () => {
     expect(formatDuration(420)).toBe('0.4s')
     expect(formatDuration(12_000)).toBe('12s')
     expect(formatDuration(65_000)).toBe('1m 05s')
-    expect(formatOffset(72_500)).toBe('+1:12')
+  })
+
+  test('sequentialSpans lays calls end to end across the whole bar', () => {
+    expect(sequentialSpans([500, 500], 10)).toEqual([
+      { before: 0, length: 5, after: 5 },
+      { before: 5, length: 5, after: 0 },
+    ])
+    // A very short call still gets a cell; the longest absorbs the rounding.
+    expect(sequentialSpans([1, 999], 10)).toEqual([
+      { before: 0, length: 1, after: 9 },
+      { before: 1, length: 9, after: 0 },
+    ])
+    expect(sequentialSpans([0, 0], 4).map(span => span.length)).toEqual([3, 1])
+    expect(sequentialSpans([10], 0)).toEqual([{ before: 0, length: 0, after: 0 }])
   })
 
   test('fitStart cuts a path from the left, keeping the file name', () => {
@@ -195,24 +292,39 @@ describe('formatting', () => {
 describe('the timeline state', () => {
   test('closes calls left running when the turn ends', () => {
     const call = { id: 'c1', tool: 'Bash', summary: '', isPath: false, isSubagent: false, startedAt: 0, endedAt: null, outcome: 'running' as const }
-    const ended = endTurn(addCall(startTurn('t', 'p', 0), call), 5_000)
+    const ended = endTurn(addCall(startTurn('t', 0), call), 5_000)
     expect(ended.calls[0]).toMatchObject({ outcome: 'error', endedAt: 5_000 })
     expect(ended.endedAt).toBe(5_000)
   })
 
   test('finishes one call without touching the others', () => {
-    const base = startTurn('t', 'p', 0)
+    const base = startTurn('t', 0)
     const one = { id: 'a', tool: 'Read', summary: '', isPath: false, isSubagent: false, startedAt: 0, endedAt: null, outcome: 'running' as const }
     const two = { ...one, id: 'b' }
     const done = finishCall(addCall(addCall(base, one), two), 'a', 'ok', 10)
     expect(done.calls.map(call => call.outcome)).toEqual(['ok', 'running'])
   })
 
-  test('reads outcomes and counts tools', () => {
+  test('reads outcomes and the reason a call was denied or failed', () => {
     expect(outcomeOf({ deny: 'no' })).toBe('denied')
     expect(outcomeOf({ isError: true })).toBe('error')
+    expect(outcomeOf({ isError: true, text: 'PreToolUse:Bash hook error: ["/x.sh"]: BLOCKED: no' })).toBe('denied')
+    expect(outcomeOf({ isError: true, text: "The user doesn't want to proceed with this tool use." })).toBe('denied')
+    expect(outcomeOf({ isError: true, text: 'Exit code 1' })).toBe('error')
     expect(outcomeOf({})).toBe('ok')
-    const calls = ['Bash', 'Edit', 'Bash'].map((tool, i) => ({ id: String(i), tool, summary: '', isPath: false, isSubagent: false, startedAt: 0, endedAt: 0, outcome: 'ok' as const }))
-    expect(toolCounts(calls)).toEqual([['Bash', 2], ['Edit', 1]])
+    expect(noteOf({ deny: 'use the trash' })).toBe('use the trash')
+    expect(noteOf({ isError: true, text: '\n  Exit code 1\nmore' })).toBe('Exit code 1')
+    const guard = 'PreToolUse:Bash hook error: ["/x/block-secrets.sh"]: BLOCKED: \'grep -r TODO .\' searches recursively and would read .env files. Add --exclude.'
+    expect(noteOf({ isError: true, text: guard })).toBe('searches recursively and would read .env files')
+    expect(noteOf({ text: 'fine' })).toBeUndefined()
+  })
+})
+
+describe('tool looks', () => {
+  test('badge each tool', () => {
+    expect(lookOf('Read')).toMatchObject({ badge: 'R', color: 'blue' })
+    expect(lookOf('Bash')).toMatchObject({ badge: '$', color: 'yellow' })
+    expect(lookOf('mcp__x__y').badge).toBe('M')
+    expect(lookOf('Mystery').badge).toBe('M')
   })
 })

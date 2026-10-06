@@ -26,8 +26,8 @@
     {
       "name": "turn-timeline",
       "source": "./turn-timeline",
-      "description": "Live side pane listing each tool call of the current reply with timings and outcomes",
-      "version": "0.2.0"
+      "description": "A tool timeline card above each reply: every tool call, when it ran, how long it took, and why any was denied",
+      "version": "0.3.0"
     }
   ]
 }

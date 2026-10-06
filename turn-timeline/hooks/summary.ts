@@ -37,7 +37,16 @@ const hostOf = (url: string): string => {
   return match?.[1] ?? url
 }
 
-export type Summary = { text: string; isPath: boolean }
+export type Summary = { text: string; isPath: boolean; description?: string }
+
+// `cd <folder> &&` (or `;`) at the start of a command: where it ran, not what.
+const LEADING_CD = /^\s*cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*/
+
+/** A command without the `cd` steps it starts with, so what it runs shows first. */
+export const shortCommand = (command: string): string => {
+  const rest = command.replace(LEADING_CD, '')
+  return rest === command || rest.trim() === '' ? command : shortCommand(rest)
+}
 
 /**
  * A few words saying what a tool call does, from its arguments: the command
@@ -58,8 +67,10 @@ export const summarize = (
 
   const summary = (() => {
     switch (tool) {
-      case 'Bash':
-        return pick('description', 'command') ?? ''
+      case 'Bash': {
+        const command = pick('command')
+        return command === undefined ? (pick('description') ?? '') : shortCommand(command)
+      }
       case 'Grep':
       case 'Glob':
         return pick('pattern') ?? ''
@@ -77,7 +88,11 @@ export const summarize = (
     }
   })()
 
-  return { text: oneLine(summary).slice(0, MAX_SUMMARY_CHARS), isPath: false }
+  const text = oneLine(summary).slice(0, MAX_SUMMARY_CHARS)
+  const description = tool === 'Bash' ? pick('description') : undefined
+  return description === undefined || oneLine(description) === text
+    ? { text, isPath: false }
+    : { text, isPath: false, description: oneLine(description).slice(0, MAX_SUMMARY_CHARS) }
 }
 
 /** `mcp__plugin_playwright_playwright__browser_click` reads as `playwright·browser_click`. */
