@@ -280,6 +280,11 @@ describe('helpers', () => {
     expect(formatTokens(1_250_000)).toBe('1.3M')
   })
 
+  test('cleans a model name before it is drawn', async () => {
+    const esc = String.fromCharCode(27)
+    expect(usableAgents([{ id: 'a', type: 'Explore', name: 'Explore', task: 'go', report: null, model: `ha${esc}]0;x\niku` }])[0]?.model).toBe('ha]0;x iku')
+  })
+
   test('fills in the stats an older version did not store', () => {
     const old = { id: 'a', type: 'Explore', name: 'Explore', task: 'go', report: null }
     expect(usableAgents([old])[0]).toMatchObject({ model: '', tools: 0, skills: 0, agents: 0, tokens: null })

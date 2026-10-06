@@ -77,7 +77,7 @@ const count = (value: unknown): number => (typeof value === 'number' && Number.i
 /** A stored subagent with the stats an older version did not keep filled in. */
 const withStats = (agent: Subagent): Subagent => ({
   ...agent,
-  model: typeof agent.model === 'string' ? agent.model : '',
+  model: typeof agent.model === 'string' ? cleanText(agent.model).replace(/\s+/g, ' ') : '',
   tools: count(agent.tools),
   skills: count(agent.skills),
   agents: count(agent.agents),

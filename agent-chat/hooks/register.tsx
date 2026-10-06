@@ -119,7 +119,7 @@ export const register: Register = (on, options) => {
       endedAt: null,
       task: cleanText(e.prompt),
       report: null,
-      model: started.model ?? '',
+      model: started.model === undefined ? '' : cleanName(started.model),
       tools: 0,
       skills: 0,
       agents: 0,
@@ -177,7 +177,7 @@ export const register: Register = (on, options) => {
       const tokens = tokensOf(e.usage)
       const after = await update($, agents, list =>
         finishAgent(usableAgents(list), agent.id, status, time, cleanText(report)).map(one =>
-          one.id === agent.id ? { ...one, tokens: (one.tokens ?? 0) + tokens, model: one.model || (e.usage?.model ?? '') } : one,
+          one.id === agent.id ? { ...one, tokens: (one.tokens ?? 0) + tokens, model: one.model || (e.usage === undefined ? '' : cleanName(e.usage.model)) } : one,
         ),
       )
       if (!after.some(one => one.status === 'running')) stopTicker()
