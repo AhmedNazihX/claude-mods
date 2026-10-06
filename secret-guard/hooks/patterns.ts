@@ -14,13 +14,14 @@ const PASSWORD_PLACEHOLDER = /^(\$\{.*\}|\[.*\]|<.*>|\*+|password|postgres|pass)
  * Formats that are a live credential on sight: each has a prefix or shape
  * distinctive enough that a match is very unlikely to be anything else.
  * Order matters where prefixes nest (Anthropic's `sk-ant-` and OpenRouter's
- * `sk-or-` before OpenAI's `sk-`).
+ * `sk-or-` before OpenAI's `sk-`), and an `sk-` key starts its own token, so
+ * the `sk-` inside a kebab-case name such as `task-list-item-…` is not one.
  */
 export const SECRET_PATTERNS: readonly SecretPattern[] = [
   { name: 'private key', pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----/g },
-  { name: 'Anthropic API key', pattern: /sk-ant-[A-Za-z0-9_-]{20,}/g },
-  { name: 'OpenRouter API key', pattern: /sk-or-(?:v1-)?[A-Za-z0-9]{32,}/g },
-  { name: 'OpenAI API key', pattern: /sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{32,}/g },
+  { name: 'Anthropic API key', pattern: /(?<![\w-])sk-ant-[A-Za-z0-9_-]{20,}/g },
+  { name: 'OpenRouter API key', pattern: /(?<![\w-])sk-or-(?:v1-)?[A-Za-z0-9]{32,}/g },
+  { name: 'OpenAI API key', pattern: /(?<![\w-])sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{32,}/g },
   { name: 'Stripe secret key', pattern: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/g },
   { name: 'Supabase secret key', pattern: /\bsb_secret_[A-Za-z0-9_-]{16,}/g },
   {

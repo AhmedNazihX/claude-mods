@@ -11,6 +11,8 @@ const fake = (...parts: string[]) => parts.join('')
 const BODY = 'Q7vLm2Rt9WkXz4Hp8NcYb3Jf6Ds1Ga5E'
 const ANTHROPIC = fake('sk-', 'ant-', 'api03-', BODY)
 const OPENROUTER = fake('sk-', 'or-', 'v1-', 'a3f9'.repeat(16))
+const OPENAI = fake('sk-', 'proj-', BODY, BODY)
+const OPENAI_LEGACY = fake('sk-', BODY.slice(0, 20), 'T3Blbk', 'FJ', BODY.slice(12))
 const STRIPE = fake('sk_', 'live_', BODY)
 const GITHUB = fake('gh', 'p_', BODY, 'abcd')
 const AWS = fake('AK', 'IA', 'Q7VLM2RT9WKXZ4HP')
@@ -40,6 +42,8 @@ describe('finding secrets', () => {
   test('recognises each format', () => {
     expect(namesIn(`const key = "${ANTHROPIC}"`)).toEqual(['Anthropic API key'])
     expect(namesIn(`OPENROUTER_API_KEY="${OPENROUTER}"`)).toEqual(['OpenRouter API key'])
+    expect(namesIn(`OPENAI_API_KEY=${OPENAI}`)).toEqual(['OpenAI API key'])
+    expect(namesIn(`new OpenAI({ apiKey: '${OPENAI_LEGACY}' })`)).toEqual(['OpenAI API key'])
     expect(namesIn(`stripe(${JSON.stringify(STRIPE)})`)).toEqual(['Stripe secret key'])
     expect(namesIn(`token: ${GITHUB}`)).toEqual(['GitHub token'])
     expect(namesIn(`aws_access_key_id = ${AWS}`)).toEqual(['AWS access key'])
@@ -67,6 +71,11 @@ describe('finding secrets', () => {
     expect(findSecrets('postgresql://postgres:postgres@localhost:54322/postgres')).toEqual([])
     expect(findSecrets('postgresql://postgres:[YOUR-PASSWORD]@db.x.supabase.co:5432/postgres')).toEqual([])
     expect(findSecrets('const id = "eyJhbGciOiJIUzI1NiJ9 is a header"')).toEqual([])
+  })
+
+  test('lets a kebab-case name with sk- inside it through', () => {
+    expect(findSecrets('<div className="task-list-item-container-wrapper-element">')).toEqual([])
+    expect(findSecrets('.task-ant-colony-simulation-view { display: grid }')).toEqual([])
   })
 })
 
@@ -125,6 +134,15 @@ describe('the guard', () => {
     const result = JSON.stringify(await $.tool.call({ tool: 'Edit', file_path: '/app/db.ts', old_string: 'url', new_string: DB_URL } as never))
     expect(result).not.toContain('written')
     expect(result).toContain('database password')
+  })
+
+  test('blocks an OpenAI key but not a kebab-case name', async ($, on) => {
+    engineBeneath(on)
+    const result = JSON.stringify(await write($, '/app/src/ai.ts', `const key = "${OPENAI}"`))
+    expect(result).not.toContain('written')
+    expect(result).toContain('OpenAI API key on line 1')
+    const markup = '<li className="task-list-item-container-wrapper-element" />'
+    expect(await write($, '/app/src/List.tsx', markup)).toMatchObject({ text: 'written' })
   })
 
   test('lets clean writes and .env files through', async ($, on) => {
