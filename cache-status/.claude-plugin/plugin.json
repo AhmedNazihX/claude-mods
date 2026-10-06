@@ -1,6 +1,6 @@
 {
   "name": "cache-status",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "A band above the prompt showing whether the prompt cache is warm, how much of the last turn it served, and what the turn cost",
   "author": {
     "name": "Ahmed"
