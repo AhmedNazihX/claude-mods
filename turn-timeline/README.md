@@ -29,6 +29,6 @@ A **Tool timeline** card above each of Claude's replies: every tool call it made
 
 Each block of Claude's text gets a card for the tool calls made since the block before it, so a reply that works in stretches ("Let me check…", tools, "Now the fix…", tools, the answer) has a card above each stretch's text. Cards stay in the conversation as you scroll back. Text with no tool calls before it gets no card, and neither does a single call that went fine (its bar would be the whole bar); a single call that was denied or failed still gets one.
 
-While Claude works, the card of the calls so far grows on the working spinner, one row per call as it starts (`running…` until it ends); when Claude's text arrives, the card moves above it.
+While Claude works, the card of the calls so far grows live (on the working spinner in the terminal, in the band above the prompt on the desktop app), one row per call as it starts (`running…` until it ends); when Claude's text arrives, the card moves above it.
 
 Calls that fail before they run (a tool that isn't available, input the tool refuses) are on the card too, read from the stored request and result, with no time of their own. A long turn shows its last 12 calls (`… 8 earlier`). On the desktop app the bars are drawn as shapes. Claude Code's own folded summary line (`Ran 2 shell commands`) is left out when a card shows the same calls; ctrl+o still shows every call.

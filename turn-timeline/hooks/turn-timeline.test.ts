@@ -220,7 +220,7 @@ for (const surface of SURFACES) {
       expect(all).toContain('failed · No such tool available: Grep')
     })
 
-    test('grows on the working spinner while Claude works, and clears with the text', async ($, on) => {
+    test('grows live while Claude works, and clears with the text', async ($, on) => {
       const clock = mock.clock(on, { now: 0 })
       engineBeneath(on, clock)
       let mounts = 0
@@ -236,14 +236,30 @@ for (const surface of SURFACES) {
         const drawn = (await ui.findAll({ type: 'Svg' as never })).flatMap(found => svgTexts(String(found.props.source)))
         return [...drawn, ...lines].join('|')
       }
+      const band = async () => {
+        const ui = await $.ui.mount({
+          plugin: 'turn-timeline',
+          surface,
+          component: 'AbovePrompt',
+          requestId: `b${(mounts += 1)}`,
+          props: { hasSurvey: false, isWorking: true, bodyColumns: 100 } as never,
+        })
+        const lines = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+        const drawn = (await ui.findAll({ type: 'Svg' as never })).flatMap(found => svgTexts(String(found.props.source)))
+        return [...lines, ...drawn].join('|')
+      }
+      // The terminal grows the card on its spinner; the desktop in the band above the prompt.
+      const live = surface === 'terminal' ? spinner : band
+      const idle = surface === 'terminal' ? band : spinner
       await $.turn.start({ turnId: 'tl', text: 'go' } as never)
-      expect(await spinner()).toBe('the reply text')
+      expect(await live()).toBe('the reply text')
       await $.tool.call({ tool: 'Read', file_path: '/a.ts' } as never)
-      expect(await spinner()).toContain('1 call · ')
+      expect(await live()).toContain('1 call · ')
+      expect(await idle()).toBe('the reply text')
       await $.tool.call({ tool: 'Bash', command: 'ls' } as never)
-      expect(await spinner()).toContain('2 calls · ')
+      expect(await live()).toContain('2 calls · ')
       await appendReply($, 'live-done')
-      expect(await spinner()).toBe('the reply text')
+      expect(await live()).toBe('the reply text')
     })
 
     test('shows why a call failed', async ($, on) => {

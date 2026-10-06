@@ -244,7 +244,8 @@ export const register: Register = on => {
   // While Claude works, the stretch so far grows on the working spinner;
   // the spinner is drawn again as it changes, unlike a stored reply.
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
-    const stretch = await read($, liveCard)
+    // The desktop shows the live card in the band above the prompt instead.
+    const stretch = e.surface === 'desktop' ? null : await read($, liveCard)
     if (stretch === null) return next(e)
     const spinner = await next(e)
     const table = $.ui.resolve(e)
@@ -254,6 +255,23 @@ export const register: Register = on => {
       <table.Box flexDirection="column">
         {renderCard({ Box: table.Box, Text: table.Text, Svg }, { turn: stretch, columns })}
         {spinner ?? null}
+      </table.Box>
+    )
+  })
+
+  // The desktop does not draw its working row again as the card grows, but
+  // it does the band above the prompt: there the live card sits under the
+  // other bands (cache-status) until the text arrives.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const stretch = e.surface === 'desktop' ? await read($, liveCard) : null
+    if (stretch === null || e.props.hasSurvey) return next(e)
+    const below = await next(e)
+    const table = $.ui.resolve(e)
+    const Svg = 'Svg' in table ? table.Svg : undefined
+    return (
+      <table.Box flexDirection="column">
+        {below ?? null}
+        {renderCard({ Box: table.Box, Text: table.Text, Svg }, { turn: stretch, columns: e.props.bodyColumns })}
       </table.Box>
     )
   })
