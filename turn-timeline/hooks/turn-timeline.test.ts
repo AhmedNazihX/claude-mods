@@ -3,6 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { fit, fitStart, formatDuration, sequentialSpans } from './format'
+import { coveredMs, longestLabel, shownCalls } from './card-model'
 import { lookOf } from './look'
 import { displayPath, printable, summarize, toolLabel } from './summary'
 import { addCall, endTurn, finishCall, noteOf, outcomeOf, startTurn } from './timeline'
@@ -117,6 +118,9 @@ for (const surface of SURFACES) {
         })
       const textOf = async (ids: string[], isActive?: boolean) =>
         (await (await group(ids, isActive)).findAll({ type: 'Text' })).map(found => found.text)
+      // Not before its card is drawn: until then the line is all that shows the calls.
+      expect(await textOf(['tu1'])).toEqual(['the reply text'])
+      expect((await textsOf($, surface, 'm4'))[0]).toBe('Tool timeline')
       expect(await textOf(['tu1'])).toEqual([])
       expect(await textOf(['tu1'], true)).toEqual(['the reply text'])
       expect(await textOf(['tu1', 'other'])).toEqual(['the reply text'])
@@ -260,6 +264,58 @@ for (const surface of SURFACES) {
       expect(await live()).toContain('2 calls · ')
       await appendReply($, 'live-done')
       expect(await live()).toBe('the reply text')
+    })
+
+    test('draws a card above one block of a row only', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on, clock)
+      await runTurn($, '5c7d2e8d-b25d-43ea-ba24-b34b0a2a29cd', [{ tool: 'Read', file_path: '/a.ts' }, { tool: 'Read', file_path: '/b.ts' }])
+      expect((await textsOf($, surface, '5c7d2e8d-b25d-43ea-ba24-000000000000'))[0]).toBe('Tool timeline')
+      expect(await textsOf($, surface, '5c7d2e8d-b25d-43ea-ba24-000000000001', 'Second block.')).toEqual(['the reply text'])
+    })
+
+    test('finds the card by any one text block of its row', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on, clock)
+      await $.turn.start({ turnId: 'tb', text: 'go' } as never)
+      await $.tool.call({ tool: 'Read', file_path: '/a.ts' } as never)
+      await $.tool.call({ tool: 'Read', file_path: '/b.ts' } as never)
+      try {
+        await $.session.append({
+          message: { type: 'assistant', role: 'assistant', content: [{ type: 'text', text: 'Done.' }, { type: 'text', text: 'Next, the tests.' }] },
+          door: 'response',
+          origin: { kind: 'model' },
+          uuid: 'two-blocks',
+        } as never)
+      } catch {
+        // Expected: nothing beneath stores the row.
+      }
+      expect((await textsOf($, surface, 'msg_x-t1', 'Next, the tests.'))[0]).toBe('Tool timeline')
+    })
+
+    test('leaves calls made after the turn ended off the live card', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on, clock)
+      await runTurn($, 'ended', [{ tool: 'Read', file_path: '/a.ts' }, { tool: 'Read', file_path: '/b.ts' }])
+      await $.tool.call({ tool: 'Bash', command: 'background work' } as never)
+      const ui = await $.ui.mount({
+        plugin: 'turn-timeline',
+        surface,
+        component: 'AbovePrompt',
+        requestId: 'band-after',
+        props: { hasSurvey: false, isWorking: false, bodyColumns: 100 } as never,
+      })
+      expect((await ui.findAll({ type: 'Text' })).map(found => found.text)).toEqual(['the reply text'])
+    })
+
+    test('drops the oldest card past a hundred, its copy too', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on, clock)
+      for (let i = 0; i <= 100; i += 1) {
+        await runTurn($, `old-${i}`, [{ tool: 'Read', file_path: '/a.ts' }, { tool: 'Read', file_path: `/b${i}.ts` }])
+      }
+      expect(await textsOf($, surface, 'old-0', 'Gone.')).toEqual(['the reply text'])
+      expect((await textsOf($, surface, 'old-100', 'Kept.'))[0]).toBe('Tool timeline')
     })
 
     test('shows why a call failed', async ($, on) => {
@@ -408,12 +464,33 @@ describe('the timeline state', () => {
     expect(outcomeOf({ isError: true, text: 'PreToolUse:Bash hook error: ["/x.sh"]: BLOCKED: no' })).toBe('denied')
     expect(outcomeOf({ isError: true, text: "The user doesn't want to proceed with this tool use." })).toBe('denied')
     expect(outcomeOf({ isError: true, text: 'Exit code 1' })).toBe('error')
+    expect(outcomeOf({ isError: true, text: "EACCES: permission denied, open '/etc/shadow'" })).toBe('error')
     expect(outcomeOf({})).toBe('ok')
     expect(noteOf({ deny: 'use the trash' })).toBe('use the trash')
     expect(noteOf({ isError: true, text: '\n  Exit code 1\nmore' })).toBe('Exit code 1')
     const guard = 'PreToolUse:Bash hook error: ["/x/block-secrets.sh"]: BLOCKED: \'grep -r TODO .\' searches recursively and would read .env files. Add --exclude.'
     expect(noteOf({ isError: true, text: guard })).toBe('searches recursively and would read .env files')
     expect(noteOf({ text: 'fine' })).toBeUndefined()
+  })
+})
+
+describe('the card model', () => {
+  const at = (id: string, startedAt: number, endedAt: number, extra: object = {}) =>
+    ({ id, tool: 'Bash', summary: id, isPath: false, isSubagent: false, startedAt, endedAt, outcome: 'ok' as const, ...extra })
+
+  test('counts overlapping time once', () => {
+    // An Agent call of 60s holding five 10s calls of its subagent.
+    const calls = [at('agent', 0, 60_000), ...[0, 1, 2, 3, 4].map(i => at(`c${i}`, i * 10_000, i * 10_000 + 10_000, { isSubagent: true }))]
+    expect(coveredMs(calls)).toBe(60_000)
+    expect(coveredMs([at('a', 0, 1000), at('b', 2000, 2500)])).toBe(1500)
+    expect(coveredMs([])).toBe(0)
+  })
+
+  test('sizes the labels by the rows shown, not the ones cut off', () => {
+    const turn = { id: 't', startedAt: 0, endedAt: 1, calls: [at('x'.repeat(120), 0, 1), ...Array.from({ length: 12 }, (_, i) => at(`c${i}`, 0, 1))] }
+    const { shown, hidden } = shownCalls(turn)
+    expect(hidden).toBe(1)
+    expect(longestLabel(shown)).toBe('Bash c11'.length)
   })
 })
 

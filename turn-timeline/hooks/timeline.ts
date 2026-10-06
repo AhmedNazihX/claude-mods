@@ -43,8 +43,10 @@ export const endTurn = (turn: TimelineTurn, now: number): TimelineTurn => ({
 export type ToolResultLike = { deny?: unknown; isError?: unknown; text?: unknown }
 
 // A call a settings hook blocked, or the person refused at the permission
-// prompt, comes back as an error; its text says which.
-const REFUSED = [/hook error:/i, /^\s*BLOCKED\b/i, /doesn't want to proceed/i, /permission .*denied/i]
+// prompt, comes back as an error; its text says which. An OS error such as
+// `EACCES: permission denied` is a failure, not a refusal, so the wording
+// matched is the hook's and the prompt's own.
+const REFUSED = [/hook error:/i, /^\s*BLOCKED\b/i, /doesn't want to proceed/i]
 
 export const outcomeOf = (result: ToolResultLike): CallOutcome => {
   if (typeof result.deny === 'string') return 'denied'

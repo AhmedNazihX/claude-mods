@@ -1,7 +1,8 @@
 import type { TimelineCall, TimelineTurn } from '../types'
-import { fit, fitStart, formatDuration, sequentialSpans } from './format'
+import { countText, isBad, lengthOf, longestLabel, notedCalls, reasonText, shownCalls, summaryFit, toolText } from './card-model'
+import type { Fitted } from './card-model'
+import { formatDuration, sequentialSpans } from './format'
 import { RED, lookOf } from './look'
-import { toolLabel } from './summary'
 
 // The desktop draws the card as one SVG, laid out like the app's own panels:
 // a filled rounded panel, rounded badges and bars, a proportional font for
@@ -41,28 +42,15 @@ const COLOURS = {
 const escapeXml = (text: string): string =>
   text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
-const lengthOf = (call: TimelineCall): number => Math.max((call.endedAt ?? call.startedAt) - call.startedAt, 0)
-const isBad = (call: TimelineCall): boolean => call.outcome === 'denied' || call.outcome === 'error'
-
-type Fitted = { text: string; isDescription: boolean }
-
-// As on the terminal: the command when it fits, else Claude's description in italics.
-const fittedSummary = (call: TimelineCall, chars: number): Fitted => {
-  if (chars <= 0) return { text: '', isDescription: false }
-  if (call.isPath) return { text: fitStart(call.summary, chars), isDescription: false }
-  const isDescription = call.summary.length > chars && call.description !== undefined
-  return { text: fit(isDescription ? (call.description ?? '') : call.summary, chars), isDescription }
-}
-
 const text = (x: number, y: number, body: string, attrs: string): string =>
   `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" ${attrs}>${escapeXml(body)}</text>`
 
 const renderRow = (call: TimelineCall, y: number, labelPx: number, barX: number, barPx: number, span: { before: number; length: number }) => {
   const look = lookOf(call.tool)
   const isDenied = call.outcome === 'denied'
-  const tool = `${call.isSubagent ? '↳' : ''}${toolLabel(call.tool)}`
+  const tool = toolText(call)
   const toolPx = Math.min(tool.length * MONO_CHAR_PX, labelPx)
-  const summary = fittedSummary(call, Math.floor((labelPx - toolPx - 8) / MONO_CHAR_PX))
+  const summary = summaryFit(call, Math.floor((labelPx - toolPx - 8) / MONO_CHAR_PX))
   const strike = isDenied ? ' text-decoration="line-through"' : ''
   const labelColour = isDenied ? RED.hex : COLOURS.text
   const fill = isBad(call) ? RED.hex : look.hex
@@ -85,24 +73,17 @@ const renderRow = (call: TimelineCall, y: number, labelPx: number, barX: number,
   ].join('')
 }
 
-const replacementOf = (calls: readonly TimelineCall[], call: TimelineCall, index: number): TimelineCall | undefined => {
-  const next = calls[index + 1]
-  return next !== undefined && next.tool === call.tool && next.outcome === 'ok' ? next : undefined
-}
-
 const renderNotes = (calls: readonly TimelineCall[], top: number): { body: string; height: number } => {
-  const noted = calls
-    .map((call, index) => ({ call, replacement: replacementOf(calls, call, index) }))
-    .filter(({ call }) => isBad(call) && call.note !== undefined)
+  const noted = notedCalls(calls)
   if (noted.length === 0) return { body: '', height: 0 }
   const height = noted.length * NOTE_ROW_PX + 12
   const inner = WIDTH_PX - PAD_PX * 2
   const halfChars = Math.floor((inner * 0.45) / MONO_CHAR_PX / 2)
   const lines = noted.map(({ call, replacement }, index) => {
     const y = top + 6 + index * NOTE_ROW_PX + NOTE_ROW_PX / 2 + 4
-    const what = fittedSummary(call, halfChars)
-    const instead = replacement === undefined ? undefined : fittedSummary(replacement, halfChars)
-    const reason = `${call.outcome === 'denied' ? 'denied' : 'failed'} · ${call.note ?? ''}`
+    const what = summaryFit(call, halfChars)
+    const instead = replacement === undefined ? undefined : summaryFit(replacement, halfChars)
+    const reason = reasonText(call)
     const italic = (fitted: Fitted) => (fitted.isDescription ? ' font-style="italic"' : '')
     return [
       `<text x="${PAD_PX + 14}" y="${y}" font-family="${MONO}" font-size="12.5" fill="${RED.hex}">`,
@@ -122,17 +103,14 @@ const renderNotes = (calls: readonly TimelineCall[], top: number): { body: strin
 export type CardSvg = { source: string; alt: string }
 
 /** The card for the desktop: one SVG, its height fitted to its rows and notes. */
-export const cardSvg = (turn: TimelineTurn, maxRows: number): CardSvg => {
-  const shown = turn.calls.slice(-maxRows)
-  const hidden = turn.calls.length - shown.length
-  const longestChars = Math.max(...shown.map(call => toolLabel(call.tool).length + call.summary.length + 1))
-  const labelPx = Math.min(MAX_LABEL_PX, Math.max(140, longestChars * MONO_CHAR_PX + 12))
+export const cardSvg = (turn: TimelineTurn): CardSvg => {
+  const { shown, hidden } = shownCalls(turn)
+  const labelPx = Math.min(MAX_LABEL_PX, Math.max(140, longestLabel(shown) * MONO_CHAR_PX + 12))
   const barX = LABEL_X_PX + labelPx + BAR_GAP_PX
   const barPx = Math.max(WIDTH_PX - PAD_PX - RIGHT_PX - BAR_GAP_PX - barX, 40)
   // Spans in pixels: the bar is laid out one pixel per cell.
   const spans = sequentialSpans(shown.map(lengthOf), Math.round(barPx))
-  const totalMs = turn.calls.reduce((sum, call) => sum + lengthOf(call), 0)
-  const count = `${turn.calls.length} call${turn.calls.length === 1 ? '' : 's'} · ${formatDuration(totalMs)}`
+  const count = countText(turn)
   const firstRow = FIRST_ROW_Y_PX + (hidden > 0 ? ROW_PX * 0.7 : 0)
   const rowsEnd = firstRow + (shown.length - 1) * ROW_PX + ROW_PX / 2
   const notes = renderNotes(shown, rowsEnd + NOTES_GAP_PX)

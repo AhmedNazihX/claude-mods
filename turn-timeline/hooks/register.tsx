@@ -28,9 +28,16 @@ const liveCard = atom({ plugin: 'turn-timeline', key: 'live' } as const, null)
 // and does not draw it again, so its card must be ready at that moment:
 // everything a card needs is kept here, where it is read without waiting.
 let live: TimelineTurn | null = null
-const cards = new Map<string, TimelineTurn>()
-const cardsByText = new Map<string, TimelineTurn>()
-// The calls some card shows, by tool_use_id: their folded summary line is
+
+// A card kept for a block of reply text: the row it was made for, the
+// first words of each of the row's text blocks (the desktop names a block
+// by its API message, so it is found by its words there), and the one
+// drawn block that shows it, so a second block or a reply with the same
+// words ("Done.") does not show it again.
+type Kept = { stretch: TimelineTurn; rowKey: string; textKeys: string[]; shownBy?: string }
+const kept = new Map<string, Kept>()
+const keptByText = new Map<string, Kept>()
+// The calls a drawn card shows, by tool_use_id: their folded summary line is
 // left out, since the card says the same.
 const carded = new Set<string>()
 // Where the running turn's current stretch begins: the calls made since
@@ -62,18 +69,16 @@ export const rowKey = (id: string): string => id.split('-').slice(0, 4).join('-'
 
 const TEXT_KEY_CHARS = 200
 
-// A second way to find a card: by the start of the text it sits above. The
-// desktop app names a text block by its API message (`msg_…-t0`), which
-// shares nothing with the stored row's id.
+// A card is also found by the first words of the text it sits above.
 const textKey = (text: string): string => text.trim().slice(0, TEXT_KEY_CHARS)
 
-const textOf = (content: unknown): string =>
+/** Each text block of a stored row, as the transcript draws them one by one. */
+const textsOf = (content: unknown): string[] =>
   Array.isArray(content)
     ? content
-        .filter(block => block?.type === 'text' && typeof block.text === 'string')
+        .filter(block => block?.type === 'text' && typeof block.text === 'string' && block.text.trim() !== '')
         .map(block => block.text as string)
-        .join('\n')
-    : ''
+    : []
 
 const hasText = (content: unknown): boolean =>
   Array.isArray(content) &&
@@ -123,34 +128,52 @@ function addFailedEarly(content: unknown) {
   }
 }
 
-// Keeps a card in memory at once, then a copy with the host for reloads.
-function keepCard($: EngineInterface, rowId: string, text: string, stretch: TimelineTurn) {
-  const id = rowKey(rowId)
-  cards.set(id, stretch)
-  if (textKey(text) !== '') cardsByText.set(textKey(text), stretch)
-  for (const call of stretch.calls) carded.add(call.id)
-  const dropped = [...cards.keys()].slice(0, Math.max(cards.size - MAX_CARDS, 0))
-  for (const old of dropped) {
-    const dropping = cards.get(old)
-    for (const call of dropping?.calls ?? []) carded.delete(call.id)
-    for (const [key, kept] of cardsByText) if (kept === dropping) cardsByText.delete(key)
-    cards.delete(old)
-  }
+// Keeps a card in memory at once, then a copy with the host for reloads;
+// past MAX_CARDS the oldest goes, with its copy.
+function keepCard($: EngineInterface, rowId: string, texts: readonly string[], stretch: TimelineTurn) {
+  const entry: Kept = { stretch, rowKey: rowKey(rowId), textKeys: texts.map(textKey).filter(key => key !== '') }
+  kept.set(entry.rowKey, entry)
+  for (const key of entry.textKeys) keptByText.set(key, entry)
+  saveCopy($, entry.rowKey, stretch)
+  for (const old of [...kept.values()].slice(0, Math.max(kept.size - MAX_CARDS, 0))) dropCard($, old)
+}
+
+function dropCard($: EngineInterface, entry: Kept) {
+  kept.delete(entry.rowKey)
+  for (const key of entry.textKeys) if (keptByText.get(key) === entry) keptByText.delete(key)
+  for (const call of entry.stretch.calls) carded.delete(call.id)
+  saveCopy($, entry.rowKey, null)
+}
+
+function saveCopy($: EngineInterface, id: string, stretch: TimelineTurn | null) {
   update($, memberOf(card, { requestId: id }), () => stretch).catch(error =>
     $.ui.log(`turn-timeline could not keep a card: ${error}`, { to: 'debug' }),
   )
 }
 
-// A card found by its text is taken once and kept under the block's own id,
-// so a later reply with the same words ("Done.") does not show it again.
-function claimByText(id: string, text: string): TimelineTurn | undefined {
-  const key = textKey(text)
-  const stretch = cardsByText.get(key)
-  if (stretch === undefined) return undefined
-  cardsByText.delete(key)
-  cards.set(id, stretch)
-  return stretch
+// The card a drawn block of text shows, if any: by its row, else by its
+// words, else (after a reload) by the host's copy. The first block to draw
+// a card owns it; any other block draws none.
+async function cardFor($: EngineInterface, requestId: string, text: string): Promise<Kept | undefined> {
+  const id = rowKey(requestId)
+  const found = kept.get(id) ?? keptByText.get(textKey(text)) ?? (await fromCopy($, id))
+  if (found === undefined) return undefined
+  if (found.shownBy === undefined) found.shownBy = requestId
+  return found.shownBy === requestId ? found : undefined
 }
+
+async function fromCopy($: EngineInterface, id: string): Promise<Kept | undefined> {
+  const stretch = await read($, memberOf(card, { requestId: id }))
+  if (stretch === null) return undefined
+  const entry: Kept = { stretch, rowKey: id, textKeys: [] }
+  kept.set(id, entry)
+  return entry
+}
+
+// The card's width on a surface that measures in columns: the viewport
+// less the reply's indent, kept to a readable width.
+const cardColumns = (viewport: { columns: number } | undefined): number =>
+  Math.min((viewport?.columns ?? DEFAULT_COLUMNS) - MESSAGE_INDENT, MAX_CARD_COLUMNS)
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -173,7 +196,7 @@ export const register: Register = on => {
     for (const [id, use] of toolUsesOf(e.message.content)) uses.set(id, use)
     if (hasText(e.message.content)) {
       const stretch = takeStretch()
-      if (stretch !== undefined) keepCard($, e.uuid, textOf(e.message.content), stretch)
+      if (stretch !== undefined) keepCard($, e.uuid, textsOf(e.message.content), stretch)
       publishLive($)
     }
     return next(e)
@@ -222,8 +245,10 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    // The turn is over: calls made after it (a background agent still at
+    // work) are no part of it, and the live card goes.
     if (e.agentId === undefined && live !== null) {
-      live = endTurn(live, await $.clock.now())
+      live = null
       update($, liveCard, () => null).catch(error =>
         $.ui.log(`turn-timeline could not clear the live card: ${error}`, { to: 'debug' }),
       )
@@ -249,11 +274,9 @@ export const register: Register = on => {
     if (stretch === null) return next(e)
     const spinner = await next(e)
     const table = $.ui.resolve(e)
-    const Svg = e.surface === 'desktop' && 'Svg' in table ? table.Svg : undefined
-    const columns = Math.min((e.viewport?.columns ?? DEFAULT_COLUMNS) - MESSAGE_INDENT, MAX_CARD_COLUMNS)
     return (
       <table.Box flexDirection="column">
-        {renderCard({ Box: table.Box, Text: table.Text, Svg }, { turn: stretch, columns })}
+        {renderCard({ Box: table.Box, Text: table.Text }, { turn: stretch, columns: cardColumns(e.viewport) })}
         {spinner ?? null}
       </table.Box>
     )
@@ -277,20 +300,20 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
-    const id = rowKey(e.requestId)
-    const stretch = cards.get(id) ?? claimByText(id, e.props.text) ?? (await read($, memberOf(card, { requestId: id })))
-    if (stretch === null || e.props.text.length > MAX_MARKDOWN_CHARS) return next(e)
+    if (e.props.text.length > MAX_MARKDOWN_CHARS) return next(e)
+    const entry = await cardFor($, e.requestId, e.props.text)
+    if (entry === undefined) return next(e)
+    for (const call of entry.stretch.calls) carded.add(call.id)
 
     // The engine's own drawing of the text cannot sit inside a plugin's tree,
     // so the text is drawn here, as the transcript draws a reply.
     const table = $.ui.resolve(e)
     const { Box, Markdown, Text } = table
     const Svg = e.surface === 'desktop' && 'Svg' in table ? table.Svg : undefined
-    const columns = Math.min((e.viewport?.columns ?? DEFAULT_COLUMNS) - MESSAGE_INDENT, MAX_CARD_COLUMNS)
 
     return (
       <Box flexDirection="column">
-        {renderCard({ Box, Text, Svg }, { turn: stretch, columns })}
+        {renderCard({ Box, Text, Svg }, { turn: entry.stretch, columns: cardColumns(e.viewport) })}
         <Box>
           {e.props.isFirstOfReply ? <Text>{REPLY_BULLET}</Text> : null}
           <Box flexDirection="column" flexGrow={1}>
