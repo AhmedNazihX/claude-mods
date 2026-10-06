@@ -36,17 +36,20 @@ const isBad = (call: TimelineCall): boolean => call.outcome === 'denied' || call
 
 const toolText = (call: TimelineCall): string => `${call.isSubagent ? '↳' : ''}${toolLabel(call.tool)}`
 
+type Fitted = { text: string; isDescription: boolean }
+
 // The command when it fits; else Claude's description of it, which reads
-// better than a command cut short.
-const summaryFit = (call: TimelineCall, width: number): string => {
-  if (width <= 0) return ''
-  if (call.isPath) return fitStart(call.summary, width)
-  const text = call.summary.length > width && call.description !== undefined ? call.description : call.summary
-  return fit(text, width)
+// better than a command cut short. A description is Claude's claim about
+// the command, not the command, so it is drawn in italics to tell them apart.
+const summaryFit = (call: TimelineCall, width: number): Fitted => {
+  if (width <= 0) return { text: '', isDescription: false }
+  if (call.isPath) return { text: fitStart(call.summary, width), isDescription: false }
+  const isDescription = call.summary.length > width && call.description !== undefined
+  return { text: fit(isDescription ? (call.description ?? '') : call.summary, width), isDescription }
 }
 
 /** `Bash bun test`, cut to `width`; a path keeps its file name. */
-const labelText = (call: TimelineCall, width: number): { tool: string; summary: string } => {
+const labelText = (call: TimelineCall, width: number): { tool: string; summary: Fitted } => {
   const tool = fit(toolText(call), width)
   return { tool, summary: summaryFit(call, width - tool.length - 1) }
 }
@@ -104,7 +107,7 @@ const renderRow = (elements: CardElements, call: TimelineCall, span: Span, label
       <Box width={label}>
         <Text color={isDenied ? RED.color : undefined} wrap="truncate">
           {tool}
-          <Text dimColor={!isDenied}>{summary === '' ? '' : ` ${summary}`}</Text>
+          <Text dimColor={!isDenied} italic={summary.isDescription}>{summary.text === '' ? '' : ` ${summary.text}`}</Text>
         </Text>
       </Box>
       {bar >= MIN_BAR ? renderBar(elements, call, span) : null}
@@ -112,6 +115,10 @@ const renderRow = (elements: CardElements, call: TimelineCall, span: Span, label
     </Box>
   )
 }
+
+const renderFitted = (Text: CardElements['Text'], fitted: Fitted, color: string, fallback: string) => (
+  <Text color={color} italic={fitted.isDescription}>{fitted.text || fallback}</Text>
+)
 
 // The call that took a refused one's place: the very next call, when it is
 // the same tool and went fine. A call in between means no guess is made.
@@ -135,8 +142,13 @@ const renderNotes = ({ Box, Text }: CardElements, calls: readonly TimelineCall[]
           <Box flexShrink={1} flexGrow={1}>
             <Text wrap="truncate">
               <Text color={RED.color}>{'⊘ '}</Text>
-              <Text color={RED.color}>{summaryFit(call, half) || toolText(call)}</Text>
-              {replacement === undefined ? null : <Text color="green">{` → ${summaryFit(replacement, half)}`}</Text>}
+              {renderFitted(Text, summaryFit(call, half), RED.color, toolText(call))}
+              {replacement === undefined ? null : (
+                <Text color="green">
+                  {' → '}
+                  {renderFitted(Text, summaryFit(replacement, half), 'green', '')}
+                </Text>
+              )}
             </Text>
           </Box>
           <Box flexShrink={0}>

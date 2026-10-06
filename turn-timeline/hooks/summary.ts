@@ -40,7 +40,9 @@ const hostOf = (url: string): string => {
 export type Summary = { text: string; isPath: boolean; description?: string }
 
 // `cd <folder> &&` (or `;`) at the start of a command: where it ran, not what.
-const LEADING_CD = /^\s*cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*/
+// Only a plain folder is dropped: one holding `$`, backticks, `(`, `|`, `;`
+// or redirects could run something itself, so such a `cd` stays in view.
+const LEADING_CD = /^\s*cd\s+(?:"[^"$`\\]*"|'[^']*'|[^\s;&|$`()<>"'\\]+)\s*(?:&&|;)\s*/
 
 /** A command without the `cd` steps it starts with, so what it runs shows first. */
 export const shortCommand = (command: string): string => {
