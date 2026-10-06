@@ -1,9 +1,0 @@
-{
-  "name": "turn-timeline",
-  "version": "0.3.0",
-  "description": "A tool timeline card above each reply: every tool call with a bar showing when it ran and for how long, and why any call was denied or failed",
-  "author": {
-    "name": "Ahmed"
-  },
-  "types": "./types/index.d.ts"
-}

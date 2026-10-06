@@ -9,7 +9,6 @@ Mods for [Claude Code](https://claude.com/claude-code).
 /plugin install cache-status@ahmed-mods
 /plugin install secret-guard@ahmed-mods
 /plugin install done-chime@ahmed-mods
-/plugin install turn-timeline@ahmed-mods
 ```
 
 Update later with `/plugin marketplace update ahmed-mods`.
@@ -21,6 +20,5 @@ Update later with `/plugin marketplace update ahmed-mods`.
 | [cache-status](./cache-status) | Session dashboard above the prompt: cache countdown, hit rate, turn cost, context fill and plan usage |
 | [secret-guard](./secret-guard) | Blocks Claude from writing API keys and other secrets into your files |
 | [done-chime](./done-chime) | Chime and toast when a long reply finishes |
-| [turn-timeline](./turn-timeline) | A tool timeline card above each reply: every tool call, when it ran, how long it took, and why any was denied |
 
 A mod runs inside your Claude Code session; read what one does before you install it.

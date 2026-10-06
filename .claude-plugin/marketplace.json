@@ -22,12 +22,6 @@
       "source": "./done-chime",
       "description": "Chime and toast when a long Claude reply finishes",
       "version": "0.2.0"
-    },
-    {
-      "name": "turn-timeline",
-      "source": "./turn-timeline",
-      "description": "A tool timeline card above each reply: every tool call, when it ran, how long it took, and why any was denied",
-      "version": "0.3.0"
     }
   ]
 }
