@@ -76,6 +76,13 @@ describe('finding secrets', () => {
   test('lets a kebab-case name with sk- inside it through', () => {
     expect(findSecrets('<div className="task-list-item-container-wrapper-element">')).toEqual([])
     expect(findSecrets('.task-ant-colony-simulation-view { display: grid }')).toEqual([])
+    expect(findSecrets('.sk-button-primary-hover-outline-large { color: red }')).toEqual([])
+  })
+
+  test('finds a key run on from an escape or an encoded character', () => {
+    expect(namesIn(`const body = "line\\n${OPENAI}"`)).toEqual(['OpenAI API key'])
+    expect(namesIn(`fetch("/v1?key%3D${OPENAI}")`)).toEqual(['OpenAI API key'])
+    expect(namesIn(`prefix${ANTHROPIC}`)).toEqual(['Anthropic API key'])
   })
 })
 

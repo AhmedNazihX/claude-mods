@@ -10,18 +10,30 @@ export type SecretPattern = {
 const LOCAL_HOSTS = /@(localhost|127\.0\.0\.1|0\.0\.0\.0|host\.docker\.internal)[:/]/
 const PASSWORD_PLACEHOLDER = /^(\$\{.*\}|\[.*\]|<.*>|\*+|password|postgres|pass)$/i
 
+// The shortest stretch, between dashes and underscores, that a key's random
+// body is sure to hold: a kebab-case name's words are shorter and lowercase.
+const KEY_RUN = 16
+
+/**
+ * Whether an `sk-` match is a key and not the `sk-` inside a kebab-case name
+ * (`task-list-item-…`): some stretch of it is long and holds a capital or a
+ * digit. It looks at the match alone, never at what comes before it, so a key
+ * after `\n` or `%3D` is still found.
+ */
+const hasRandomBody = (match: RegExpExecArray): boolean =>
+  match[0].split(/[-_]/).some(part => part.length >= KEY_RUN && /[A-Z0-9]/.test(part))
+
 /**
  * Formats that are a live credential on sight: each has a prefix or shape
  * distinctive enough that a match is very unlikely to be anything else.
  * Order matters where prefixes nest (Anthropic's `sk-ant-` and OpenRouter's
- * `sk-or-` before OpenAI's `sk-`), and an `sk-` key starts its own token, so
- * the `sk-` inside a kebab-case name such as `task-list-item-…` is not one.
+ * `sk-or-` before OpenAI's `sk-`).
  */
 export const SECRET_PATTERNS: readonly SecretPattern[] = [
   { name: 'private key', pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----/g },
-  { name: 'Anthropic API key', pattern: /(?<![\w-])sk-ant-[A-Za-z0-9_-]{20,}/g },
-  { name: 'OpenRouter API key', pattern: /(?<![\w-])sk-or-(?:v1-)?[A-Za-z0-9]{32,}/g },
-  { name: 'OpenAI API key', pattern: /(?<![\w-])sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{32,}/g },
+  { name: 'Anthropic API key', pattern: /sk-ant-[A-Za-z0-9_-]{20,}/g, isSecret: hasRandomBody },
+  { name: 'OpenRouter API key', pattern: /sk-or-(?:v1-)?[A-Za-z0-9]{32,}/g, isSecret: hasRandomBody },
+  { name: 'OpenAI API key', pattern: /sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{32,}/g, isSecret: hasRandomBody },
   { name: 'Stripe secret key', pattern: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/g },
   { name: 'Supabase secret key', pattern: /\bsb_secret_[A-Za-z0-9_-]{16,}/g },
   {
