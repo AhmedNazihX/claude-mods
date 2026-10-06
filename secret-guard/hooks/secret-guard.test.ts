@@ -84,6 +84,11 @@ describe('finding secrets', () => {
     expect(namesIn(`fetch("/v1?key%3D${OPENAI}")`)).toEqual(['OpenAI API key'])
     expect(namesIn(`prefix${ANTHROPIC}`)).toEqual(['Anthropic API key'])
   })
+
+  test('finds a short key whose body is broken up by dashes', () => {
+    expect(namesIn(`key: ${fake('sk-', 'Ab3dEf9h-Kl2mNoP4-qRsT5uVw_Xy7zAb')}`)).toEqual(['OpenAI API key'])
+    expect(findSecrets('.risk-assessment-2024-quarterly-report-q3 { margin: 0 }')).toEqual([])
+  })
 })
 
 describe('secret files', () => {

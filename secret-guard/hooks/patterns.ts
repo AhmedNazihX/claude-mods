@@ -11,8 +11,10 @@ const LOCAL_HOSTS = /@(localhost|127\.0\.0\.1|0\.0\.0\.0|host\.docker\.internal)
 const PASSWORD_PLACEHOLDER = /^(\$\{.*\}|\[.*\]|<.*>|\*+|password|postgres|pass)$/i
 
 // The shortest stretch, between dashes and underscores, that a key's random
-// body is sure to hold: a kebab-case name's words are shorter and lowercase.
-const KEY_RUN = 16
+// body all but always holds (a 32-character base64url body misses it about
+// once in 3,000): a kebab-case name's words are shorter or have no capital
+// or digit.
+const KEY_RUN = 8
 
 /**
  * Whether an `sk-` match is a key and not the `sk-` inside a kebab-case name
