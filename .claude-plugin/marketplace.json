@@ -22,6 +22,12 @@
       "source": "./done-chime",
       "description": "Chime and toast when a long Claude reply finishes",
       "version": "0.2.0"
+    },
+    {
+      "name": "agent-chat",
+      "source": "./agent-chat",
+      "description": "A side pane with the messages between Claude and its subagents: each task handed over and each report sent back",
+      "version": "0.1.0"
     }
   ]
 }

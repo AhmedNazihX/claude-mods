@@ -1,0 +1,23 @@
+{
+  "name": "agent-chat",
+  "version": "0.1.0",
+  "description": "A side pane with the conversation between Claude and its subagents: what each was asked, what it did and said, and what it sent back",
+  "author": {
+    "name": "Ahmed"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "autoOpen": {
+      "type": "boolean",
+      "title": "Open when a subagent starts",
+      "description": "Open the pane the first time Claude starts a subagent in a session (it docks once the window is wide enough); off, open it with /agent-chat",
+      "default": true
+    },
+    "paneColumns": {
+      "type": "number",
+      "title": "Pane width (columns)",
+      "description": "How wide the pane opens when docked beside the conversation (30 to 120); a width you drag it to wins",
+      "default": 60
+    }
+  }
+}
