@@ -24,9 +24,12 @@ export type Subagent = {
   tools: number
   skills: number
   agents: number
-  /** The tokens its runs went through (input, output and cache), once a run ended. */
-  tokens: number | null
+  /** The tokens its runs went through, split by kind, once a run ended. */
+  tokens: TokenCounts | null
 }
+
+/** A subagent's tokens: input and output, and the cache it read and wrote. */
+export type TokenCounts = { input: number; output: number; cacheRead: number; cacheWrite: number }
 
 declare module 'claude-code' {
   interface PluginState {

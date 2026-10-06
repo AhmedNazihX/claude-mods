@@ -1,4 +1,4 @@
-import type { AgentStatus, Subagent } from '../types'
+import type { AgentStatus, Subagent, TokenCounts } from '../types'
 
 const MAX_AGENTS = 50
 const MS_PER_SECOND = 1000
@@ -74,6 +74,12 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
  */
 const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
 
+// A count an older version kept as one number has no split: it is left out.
+const asCounts = (value: unknown): TokenCounts | null =>
+  isRecord(value)
+    ? { input: count(value.input), output: count(value.output), cacheRead: count(value.cacheRead), cacheWrite: count(value.cacheWrite) }
+    : null
+
 /** A stored subagent with the stats an older version did not keep filled in. */
 const withStats = (agent: Subagent): Subagent => ({
   ...agent,
@@ -81,7 +87,7 @@ const withStats = (agent: Subagent): Subagent => ({
   tools: count(agent.tools),
   skills: count(agent.skills),
   agents: count(agent.agents),
-  tokens: typeof agent.tokens === 'number' ? agent.tokens : null,
+  tokens: asCounts(agent.tokens),
 })
 
 export const usableAgents = (agents: readonly unknown[]): Subagent[] =>
@@ -107,11 +113,21 @@ export const countTool = (agents: readonly Subagent[], id: string, tool: string)
 
 export type Usage = { input_tokens: number; output_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number }
 
-/** Every token a run went through: input, output, and cache read and written. */
-export const tokensOf = (usage: Usage | undefined): number =>
-  usage === undefined
-    ? 0
-    : count(usage.input_tokens) + count(usage.output_tokens) + count(usage.cache_read_input_tokens) + count(usage.cache_creation_input_tokens)
+/** A run's tokens by kind. */
+export const tokensOf = (usage: Usage | undefined): TokenCounts => ({
+  input: count(usage?.input_tokens),
+  output: count(usage?.output_tokens),
+  cacheRead: count(usage?.cache_read_input_tokens),
+  cacheWrite: count(usage?.cache_creation_input_tokens),
+})
+
+/** Two counts added up, kind by kind; a subagent woken again runs more than once. */
+export const addTokens = (a: TokenCounts | null, b: TokenCounts): TokenCounts =>
+  a === null
+    ? b
+    : { input: a.input + b.input, output: a.output + b.output, cacheRead: a.cacheRead + b.cacheRead, cacheWrite: a.cacheWrite + b.cacheWrite }
+
+const totalOf = (tokens: TokenCounts): number => tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite
 
 /** `claude-haiku-4-5-20251001` reads as `haiku 4.5`. */
 export const modelName = (model: string): string =>
@@ -123,20 +139,32 @@ export const modelName = (model: string): string =>
 /** `950`, `12.4k`, `1.2M`. */
 export const formatTokens = (tokens: number): string => {
   if (tokens < 1000) return String(tokens)
-  if (tokens < 1_000_000) return `${(tokens / 1000).toFixed(tokens < 10_000 ? 1 : 0)}k`
-  return `${(tokens / 1_000_000).toFixed(1)}M`
+  if (tokens < 1_000_000) return `${Number((tokens / 1000).toFixed(tokens < 10_000 ? 1 : 0))}k`
+  return `${Number((tokens / 1_000_000).toFixed(1))}M`
 }
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
 
-/** `haiku 4.5 · 6 tools · 1 skill · 0 agents · 12.4k tokens`. */
+/** `12k tokens · 2k in · 400 out · 10k cache read · 0 cache write`; empty until a run ends. */
+export const tokensText = (agent: Subagent): string => {
+  const tokens = agent.tokens
+  if (tokens === null) return ''
+  return [
+    `${formatTokens(totalOf(tokens))} tokens`,
+    `${formatTokens(tokens.input)} in`,
+    `${formatTokens(tokens.output)} out`,
+    `${formatTokens(tokens.cacheRead)} cache read`,
+    `${formatTokens(tokens.cacheWrite)} cache write`,
+  ].join(' · ')
+}
+
+/** `haiku 4.5 · 6 tools · 1 skill · 0 agents`. */
 export const statsText = (agent: Subagent): string =>
   [
     agent.model === '' ? undefined : modelName(agent.model),
     plural(agent.tools, 'tool'),
     plural(agent.skills, 'skill'),
     plural(agent.agents, 'agent'),
-    agent.tokens === null ? undefined : `${formatTokens(agent.tokens)} tokens`,
   ]
     .filter((part): part is string => part !== undefined)
     .join(' · ')

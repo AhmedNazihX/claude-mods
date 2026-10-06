@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PluginOptions, Register, Timer } from 'claude-code'
 
 import type { Subagent } from '../types'
-import { addAgent, cleanName, cleanText, countTool, finishAgent, nameFor, toggle, tokensOf, usableAgents } from './feed'
+import { addAgent, addTokens, cleanName, cleanText, countTool, finishAgent, nameFor, toggle, tokensOf, usableAgents } from './feed'
 import { renderPane } from './pane'
 import { agentResultReport, handbackText, isHandback, rowText } from './reports'
 
@@ -177,7 +177,7 @@ export const register: Register = (on, options) => {
       const tokens = tokensOf(e.usage)
       const after = await update($, agents, list =>
         finishAgent(usableAgents(list), agent.id, status, time, cleanText(report)).map(one =>
-          one.id === agent.id ? { ...one, tokens: (one.tokens ?? 0) + tokens, model: one.model || (e.usage === undefined ? '' : cleanName(e.usage.model)) } : one,
+          one.id === agent.id ? { ...one, tokens: addTokens(one.tokens, tokens), model: one.model || (e.usage === undefined ? '' : cleanName(e.usage.model)) } : one,
         ),
       )
       if (!after.some(one => one.status === 'running')) stopTicker()

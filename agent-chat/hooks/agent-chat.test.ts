@@ -189,7 +189,9 @@ for (const surface of SURFACES) {
       }
       expect(await textOf(ui)).toContain('haiku 4.5 · 4 tools · 1 skill · 1 agent')
       await finish($, 'id-Counted', 'Done.')
-      expect(await textOf(ui)).toContain('haiku 4.5 · 4 tools · 1 skill · 1 agent · 12k tokens')
+      const done = await textOf(ui)
+      expect(done).toContain('haiku 4.5 · 4 tools · 1 skill · 1 agent')
+      expect(done).toContain('12k tokens · 2k in · 400 out · 10k cache read · 0 cache write')
     })
 
     test('names the subagent that started a nested one, and marks a run cut short', async ($, on) => {
@@ -276,6 +278,7 @@ describe('helpers', () => {
     expect(modelName('custom-model')).toBe('custom-model')
     expect(formatTokens(950)).toBe('950')
     expect(formatTokens(1234)).toBe('1.2k')
+    expect(formatTokens(2000)).toBe('2k')
     expect(formatTokens(12_400)).toBe('12k')
     expect(formatTokens(1_250_000)).toBe('1.3M')
   })
@@ -288,6 +291,8 @@ describe('helpers', () => {
   test('fills in the stats an older version did not store', () => {
     const old = { id: 'a', type: 'Explore', name: 'Explore', task: 'go', report: null }
     expect(usableAgents([old])[0]).toMatchObject({ model: '', tools: 0, skills: 0, agents: 0, tokens: null })
+    // A count kept as one number has no split, so it is left out.
+    expect(usableAgents([{ ...old, tokens: 12_000 }])[0]?.tokens).toBeNull()
   })
 
   test('cleans model text and names', () => {
