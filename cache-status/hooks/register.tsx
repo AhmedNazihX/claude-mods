@@ -5,7 +5,7 @@ import type { CacheSnapshot, Meters } from '../types'
 import { renderBand } from './band'
 import { remainingMsOf, toView, turnCostOf } from './format'
 import { planLayout } from './layout'
-import { compactAtPercentOf, toMetersView } from './meters'
+import { compactAtPercentOf, formatResetsIn, toMetersView } from './meters'
 import { toSettings } from './settings'
 import type { Settings } from './settings'
 
@@ -42,13 +42,28 @@ function stopTicker() {
   ticker = undefined
 }
 
-// Moves the countdown on; once the cache is cold nothing changes until the
-// next turn, so the timer stops there.
+// Whether the band shows anything that counts down: the cache while warm, or
+// a plan usage window whose reset is still ahead.
+function isCountingDown(
+  snapshot: CacheSnapshot | null,
+  readings: Meters,
+  time: number,
+  settings: Settings,
+): boolean {
+  if (snapshot === null) return false
+  return (
+    remainingMsOf(snapshot, time, settings) > 0 ||
+    readings.rateLimits.some(limit => formatResetsIn(limit.resetsAt, time) !== null)
+  )
+}
+
+// Moves the countdown and the usage resets on; once neither has anything left
+// to count, nothing changes until the next turn or usage reading, so the
+// timer stops there.
 async function tick($: EngineInterface, settings: Settings) {
   const time = await $.clock.now()
   await update($, now, () => time)
-  const snapshot = await read($, last)
-  if (snapshot === null || remainingMsOf(snapshot, time, settings) === 0) {
+  if (!isCountingDown(await read($, last), await read($, meters), time, settings)) {
     stopTicker()
   }
 }
@@ -88,10 +103,12 @@ export const register: Register = (on, options) => {
     await refreshCompactPoint($)
     const sessionUsd = await readSessionUsd($)
     await update($, costBaseline, () => sessionUsd)
-    const snapshot = await read($, last)
     const time = await $.clock.now()
-    if (snapshot !== null && remainingMsOf(snapshot, time, settings) > 0) {
+    if (isCountingDown(await read($, last), await read($, meters), time, settings)) {
       await update($, now, () => time)
+      // Each fresh load (a reload, an enable) has its old timers dropped by
+      // the host, so a handle still held here no longer ticks: start anew.
+      stopTicker()
       startTicker($, settings)
     }
 
@@ -145,9 +162,16 @@ export const register: Register = (on, options) => {
     const table = $.ui.resolve(e)
     const Svg = e.surface === 'desktop' && 'Svg' in table ? table.Svg : undefined
 
+    const time = await read($, now)
+    const readings = await read($, meters)
+    // A reload drops the timer, and a turn that ends mid-reload may never
+    // reach the new module's start: while the band counts anything down it
+    // keeps one running. Starting it writes no state, so it may run here.
+    if (isCountingDown(snapshot, readings, time, settings)) startTicker($, settings)
+
     const band = renderBand({ Box: table.Box, Text: table.Text, Svg }, {
-      view: toView(snapshot, await read($, now), settings),
-      meters: toMetersView(await read($, meters), await read($, now)),
+      view: toView(snapshot, time, settings),
+      meters: toMetersView(readings, time),
       plan: planLayout(e.props.bodyColumns, settings.barSegments),
       isWorking: e.props.isWorking,
     })

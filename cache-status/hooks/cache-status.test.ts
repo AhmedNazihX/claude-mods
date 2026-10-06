@@ -74,6 +74,36 @@ const MEASURE = {
   changed: ['context', 'rateLimits'],
 } as const
 
+// A plan usage window whose reset is `inMs` past the mocked clock's start.
+const measureWithReset = (inMs: number) => ({
+  ...MEASURE,
+  rateLimits: [{ kind: 'five_hour', percentUsed: 41, resetsAt: new Date(1_000 + inMs).toISOString() }],
+})
+
+type Hook = (...args: unknown[]) => unknown
+const register = (on: On) => on as unknown as (event: string, ...rest: unknown[]) => unknown
+
+// The mocked clock with a stand-in for a hot reload: while `dropTimers` runs,
+// every period is refused, which ends the module's timer as a reload's cancel
+// does; the reload's `session.start` is then the test's to fire.
+const reloadableClock = (on: On) => {
+  const gate = { isDropping: false }
+  const gated = ((event: string, ...rest: unknown[]) => {
+    if (event !== 'clock.every') return register(on)(event, ...rest)
+    const hook = rest[rest.length - 1] as Hook
+    const refusedWhileDropping: Hook = (...args) =>
+      gate.isDropping ? { deny: 'reloaded' } : hook(...args)
+    return register(on)(event, ...rest.slice(0, -1), refusedWhileDropping)
+  }) as unknown as On
+  const clock = mock.clock(gated, { now: 1_000 })
+  const dropTimers = async () => {
+    gate.isDropping = true
+    await clock.advance(MINUTE_MS)
+    gate.isDropping = false
+  }
+  return { clock, dropTimers }
+}
+
 const startSession = ($: Engine, surface: Surface) =>
   $.session.start({ cwd: '/', surface, isInteractive: true } as never)
 
@@ -191,7 +221,43 @@ for (const surface of SURFACES) {
       )
     })
 
-    test('a 5m lifetime goes cold after five minutes', { options: { ttl: '5m' } }, async ($, on) => {
+    test('keeps counting down after a reload', async ($, on) => {
+      const { clock, dropTimers } = reloadableClock(on)
+      engineBeneath(on, { usd: 0 })
+      await startSession($, surface)
+      await completeTurn($)
+      await clock.advance(20 * MINUTE_MS)
+      await dropTimers()
+      await startSession($, surface)
+      await clock.advance(10 * MINUTE_MS)
+      expect(await bandText($, surface)).toContain(SAYS[surface].warm('29m'))
+    })
+
+    test('keeps the usage resets moving once the cache is cold', async ($, on) => {
+      const clock = mock.clock(on, { now: 1_000 })
+      engineBeneath(on, { usd: 0 })
+      await startSession($, surface)
+      await completeTurn($)
+      await $.session.measure(measureWithReset(4 * HOUR_MS) as never)
+      await clock.advance(2 * HOUR_MS)
+      const text = await bandText($, surface)
+      expect(text).toContain('cache cold')
+      expect(text).toContain('resets in 2h 0m')
+    })
+
+    test('starts the usage resets moving when a reading comes after the cache went cold', async ($, on) => {
+      const clock = mock.clock(on, { now: 1_000 })
+      engineBeneath(on, { usd: 0 })
+      await startSession($, surface)
+      await completeTurn($)
+      await clock.advance(2 * HOUR_MS)
+      await $.session.measure(measureWithReset(5 * HOUR_MS) as never)
+      await bandText($, surface)
+      await clock.advance(30 * MINUTE_MS)
+      expect(await bandText($, surface)).toContain('resets in 2h 30m')
+    })
+
+    test('a 5m lifetime goes cold after five minutes',{ options: { ttl: '5m' } }, async ($, on) => {
       const clock = mock.clock(on, { now: 1_000 })
       engineBeneath(on, { usd: 0 })
       await startSession($, surface)
