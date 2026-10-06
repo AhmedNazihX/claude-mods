@@ -18,11 +18,11 @@ In `/config`:
 |---|---|---|
 | Chime after (seconds) | `30` | Replies shorter than this stay quiet. |
 | Chime sound | `arpeggio` | Which sound plays (see below). |
-| Play a sound | on | Off shows the toast only. |
+| Play a sound | on | Off shows the toast and the status line only. |
 
 ## Notes
 
-- The sound plays through `afplay` on macOS. Linux and Windows terminals have no player, so you get the toast only.
+- The sound plays through `afplay` on macOS. Linux and Windows terminals have no player, so you get the toast and the status line only.
 - Six sounds ship with the mod, all original and generated for it:
 
   | Sound | |
