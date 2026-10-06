@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { PALETTE, cleanName, cleanText, firstLines, formatDuration, formatTokens, isCardOpen, keptCards, keptSections, modelName, nameFor, summaryOf, usableAgents, usableCards } from './feed'
+import { PALETTE, cleanName, cleanText, firstLines, formatDuration, formatTokens, isCardOpen, keptCards, keptSections, modelName, nameFor, stopAgents, stoppedIds, summaryOf, usableAgents, usableCards } from './feed'
 import type { Subagent } from '../types'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -35,6 +35,17 @@ const engineBeneath = (on: On, opened: unknown[] = []) => {
 
 const spawn = ($: Engine, description: string, prompt = `Please ${description}.`, subagentType = 'Explore', parentAgentId?: string) =>
   $.agent.spawn({ prompt, description, subagentType, ...(parentAgentId === undefined ? {} : { parentAgentId }) } as never)
+
+// The session's agents as `$.agent.list()` answers them: each status the test
+// gives, by id; the calls counted, so a test can tell the ticker stopped.
+const listAgents = (on: On, statuses: () => Readonly<Record<string, string>>) => {
+  const calls = { count: 0 }
+  on('agent.list', () => {
+    calls.count += 1
+    return { value: Object.entries(statuses()).map(([id, status]) => ({ id, status, description: '', type: 'Explore' })) } as never
+  })
+  return calls
+}
 
 // A plugin beside the mod that reads out the card states it keeps: any
 // plugin reads another's state, and the kit's engine has none of its own.
@@ -308,6 +319,54 @@ for (const surface of SURFACES) {
       expect(done).toContain('Work on that.')
     })
 
+    test('marks a card stopped once the session lists its subagent as killed, and stops the timers', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      let statuses: Record<string, string> = { 'id-Killed': 'running' }
+      const listed = listAgents(on, () => statuses)
+      await spawn($, 'Killed')
+      try {
+        await $.session.append({ message: { type: 'assistant', role: 'assistant', content: [{ type: 'text', text: 'Halfway there.' }] }, door: 'response', origin: { kind: 'model' }, uuid: 'u1', agentId: 'id-Killed' } as never)
+      } catch {
+        // Expected: nothing beneath stores the row.
+      }
+      const ui = await mountPane($, surface)
+      await clock.advance(2000)
+      expect(await textOf(ui)).toContain('working · 2s')
+      statuses = { 'id-Killed': 'killed' }
+      await clock.advance(1000)
+      const lookedAt = listed.count
+      await clock.advance(5000)
+      await pressCard(ui, 'id-Killed')
+      const stopped = await textOf(ui)
+      expect(stopped).toContain('stopped · 3s')
+      expect(stopped).toContain('Halfway there.')
+      expect(stopped).not.toContain('⋯ working')
+      expect(listed.count).toBe(lookedAt)
+    })
+
+    test('keeps a card working through a reload while its subagent runs on, and stops only the one that ended', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      on('session.start', ($, e) => ({ cwd: e.cwd }) as never)
+      let statuses: Record<string, string> = { 'id-Running': 'running', 'id-Lost': 'running' }
+      listAgents(on, () => statuses)
+      await spawn($, 'Running')
+      await spawn($, 'Lost')
+      // A reload starts the session again: the cards still working stay so.
+      await $.session.start({ cwd: '/', surface, isInteractive: true } as never)
+      const ui = await mountPane($, surface)
+      await clock.advance(2000)
+      expect(await textOf(ui)).toContain('2 working · 0 finished')
+      statuses = { 'id-Running': 'running', 'id-Lost': 'failed' }
+      await clock.advance(2000)
+      await pressCard(ui, 'id-Lost')
+      const all = await textOf(ui)
+      expect(all).toContain('1 working · 1 finished')
+      expect(all).toContain('working · 4s')
+      expect(all).toContain('stopped · 3s')
+    })
+
     test('lets go of the open and shut states of the cards dropped off the end', { plugins: [peek] }, async ($, on) => {
       mock.clock(on, { now: 0 })
       engineBeneath(on)
@@ -438,6 +497,24 @@ describe('helpers', () => {
     expect(cards).toEqual({ Explore0: true, Explore1: false, Plan2: true })
     expect(keptSections(['Explore0:task', 'Explore1:report', 'Plan2:task', 'Plan2:report'], kept)).toEqual(['Explore1:report', 'Plan2:task', 'Plan2:report'])
     expect(keptSections(['a:b:task'], [{ ...agent('x', 0), id: 'a:b' }])).toEqual(['a:b:task'])
+  })
+
+  test('stops only the running cards whose subagent is listed killed or failed', () => {
+    const running = agent('Explore', 0)
+    const done = { ...agent('Plan', 1), status: 'done' as const, endedAt: 5, report: 'Done.' }
+    const listed = [
+      { id: 'Explore0', status: 'killed' },
+      { id: 'Plan1', status: 'killed' },
+      { id: 'Other', status: 'failed' },
+    ]
+    expect(stoppedIds([running, done], listed)).toEqual(new Set(['Explore0']))
+    expect(stoppedIds([running], [{ id: 'Explore0', status: 'failed' }])).toEqual(new Set(['Explore0']))
+    for (const status of ['running', 'idle', 'waiting', 'completed']) {
+      expect(stoppedIds([running], [{ id: 'Explore0', status }]).size).toBe(0)
+    }
+    const after = stopAgents([running, done], new Set(['Explore0', 'Plan1']), 9, id => `${id} said`)
+    expect(after).toEqual([{ ...running, status: 'failed', endedAt: 9, report: 'Explore0 said' }, done])
+    expect(running.status).toBe('running')
   })
 
   test('leaves out card states that are not a yes or no', () => {

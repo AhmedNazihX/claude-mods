@@ -89,6 +89,23 @@ export const keptSections = (expanded: readonly string[], agents: readonly Subag
   return expanded.filter(section => ids.has(section.slice(0, section.lastIndexOf(':'))))
 }
 
+// How the session lists a loop that ended without an answer: stopped by the
+// person or by Claude, or dead on an error.
+const STOPPED_STATUSES: readonly string[] = ['killed', 'failed']
+
+/**
+ * The cards still working whose subagent the session lists as stopped: its
+ * `turn.complete` may never come, so the card would say working for good.
+ */
+export const stoppedIds = (agents: readonly Subagent[], listed: readonly { id: string; status: string }[]): Set<string> => {
+  const running = new Set(agents.filter(agent => agent.status === 'running').map(agent => agent.id))
+  return new Set(listed.filter(one => running.has(one.id) && STOPPED_STATUSES.includes(one.status)).map(one => one.id))
+}
+
+/** Their runs were stopped: each card says so, with what its subagent said last. */
+export const stopAgents = (agents: readonly Subagent[], ids: ReadonlySet<string>, now: number, reportOf: (id: string) => string): Subagent[] =>
+  agents.map(agent => (agent.status === 'running' && ids.has(agent.id) ? { ...agent, status: 'failed', endedAt: now, report: reportOf(agent.id) } : agent))
+
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 
 export const toggle = (ids: readonly string[], id: string): string[] =>

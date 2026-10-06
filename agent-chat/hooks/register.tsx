@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PluginOptions, Register, Timer } from 'claude-code'
 
 import type { Subagent } from '../types'
-import { addAgent, addTokens, cleanDescription, cleanName, cleanText, countTool, finishAgent, keptCards, keptSections, nameFor, toggle, tokensOf, usableAgents, usableCards } from './feed'
+import { addAgent, addTokens, cleanDescription, cleanName, cleanText, countTool, finishAgent, keptCards, keptSections, nameFor, stopAgents, stoppedIds, toggle, tokensOf, usableAgents, usableCards } from './feed'
 import { renderPane } from './pane'
 import { agentResultReport, handbackText, isHandback, rowText } from './reports'
 
@@ -64,11 +64,29 @@ function stopTicker() {
   ticker = undefined
 }
 
+const isAnyRunning = (list: readonly Subagent[]): boolean => list.some(one => one.status === 'running')
+
+// The report a subagent cut short leaves: what it handed back, else what it
+// said last. Kept for its turn.complete, should one come after all.
+const reportSoFar = (id: string): string => cleanText(handedBack.get(id) || lastSaid.get(id) || '')
+
+// A subagent stopped by the person or by Claude, or dead on an error, may
+// end without a turn.complete; the session's list of agents still says so.
+async function markStopped($: EngineInterface) {
+  const stopped = stoppedIds(usableAgents(await read($, agents)), await $.agent.list())
+  if (stopped.size === 0) return
+  const time = await $.clock.now()
+  const after = await update($, agents, list => stopAgents(usableAgents(list), stopped, time, reportSoFar))
+  if (!isAnyRunning(after)) stopTicker()
+  followNewest($)
+}
+
 function tick($: EngineInterface) {
   $.clock
     .now()
     .then(time => update($, now, () => time))
     .catch(error => log($, 'could not move the timers', error))
+  markStopped($).catch(error => log($, 'could not look for stopped subagents', error))
 }
 
 function startTicker($: EngineInterface) {
@@ -88,9 +106,11 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     // A reload starts the module over; colours go on from those already given.
+    // A card still working may be a subagent that runs on through the reload:
+    // the ticker's first look at the session's agents stops only the ended ones.
     const known = usableAgents(await read($, agents))
     nextColour = Math.max(nextColour, ...known.map(agent => agent.colour + 1))
-    if (known.some(agent => agent.status === 'running')) startTicker($)
+    if (isAnyRunning(known)) startTicker($)
     await $.command
       .register({ name: COMMAND, description: 'Show the messages between Claude and its subagents in a side pane' })
       .catch(error => log($, `could not register /${COMMAND}`, error))
@@ -203,7 +223,7 @@ export const register: Register = (on, options) => {
           one.id === agent.id ? { ...one, tokens: isCounted ? one.tokens : addTokens(one.tokens, tokens), model: one.model || (e.usage === undefined ? '' : cleanName(e.usage.model)) } : one,
         ),
       )
-      if (!after.some(one => one.status === 'running')) stopTicker()
+      if (!isAnyRunning(after)) stopTicker()
       followNewest($)
     }
     return next(e)
