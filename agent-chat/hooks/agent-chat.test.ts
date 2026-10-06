@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { PALETTE, cleanName, cleanText, firstLines, formatDuration, formatTokens, isCardOpen, modelName, nameFor, summaryOf, usableAgents, usableCards } from './feed'
+import { PALETTE, cleanName, cleanText, firstLines, formatDuration, formatTokens, isCardOpen, keptCards, keptSections, modelName, nameFor, summaryOf, usableAgents, usableCards } from './feed'
 import type { Subagent } from '../types'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -35,6 +35,22 @@ const engineBeneath = (on: On, opened: unknown[] = []) => {
 
 const spawn = ($: Engine, description: string, prompt = `Please ${description}.`, subagentType = 'Explore', parentAgentId?: string) =>
   $.agent.spawn({ prompt, description, subagentType, ...(parentAgentId === undefined ? {} : { parentAgentId }) } as never)
+
+// A plugin beside the mod that reads out the card states it keeps: any
+// plugin reads another's state, and the kit's engine has none of its own.
+// It loads as a module of its own, so it names everything in place.
+const peek = {
+  name: 'agent-chat-peek',
+  register: (on: On) => {
+    on('command.run', { command: 'agent-chat-peek' }, async $ => {
+      const cards = await $.state.get({ plugin: 'agent-chat', key: 'cards' })
+      const expanded = await $.state.get({ plugin: 'agent-chat', key: 'expanded' })
+      return { text: JSON.stringify({ cards: cards.value ?? {}, expanded: expanded.value ?? [] }) }
+    })
+  },
+}
+
+const peekState = async ($: Engine) => JSON.parse((await $.command.run({ command: 'agent-chat-peek', args: '' } as never) as { text: string }).text)
 
 const USAGE = { input_tokens: 2000, output_tokens: 400, cache_read_input_tokens: 10_000, cache_creation_input_tokens: 0, model: 'claude-haiku-4-5-20251001' }
 
@@ -292,6 +308,23 @@ for (const surface of SURFACES) {
       expect(done).toContain('Work on that.')
     })
 
+    test('lets go of the open and shut states of the cards dropped off the end', { plugins: [peek] }, async ($, on) => {
+      mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      const longTask = Array.from({ length: 10 }, (_, i) => `step ${i + 1}`).join('\n')
+      await spawn($, 'Oldest', longTask)
+      await spawn($, 'Next', longTask)
+      const ui = await mountPane($, surface)
+      for (const id of ['id-Oldest', 'id-Next']) {
+        await pressCard(ui, id)
+        await pressCard(ui, id)
+        await ui.press({ key: `${id}-task-toggle` } as never)
+      }
+      expect(await peekState($)).toEqual({ cards: { 'id-Oldest': true, 'id-Next': true }, expanded: ['id-Oldest:task', 'id-Next:task'] })
+      for (let i = 0; i < 49; i += 1) await spawn($, `more ${i}`)
+      expect(await peekState($)).toEqual({ cards: { 'id-Next': true }, expanded: ['id-Next:task'] })
+    })
+
     test('follows the newest card', async ($, on) => {
       mock.clock(on, { now: 0 })
       engineBeneath(on)
@@ -396,6 +429,15 @@ describe('helpers', () => {
     expect(summaryOf('# Title\n\n- **one** [link](http://x)\n1. `two`', 100)).toBe('Title one link two')
     expect(summaryOf('alpha beta gamma delta', 12)).toBe('alpha beta…')
     expect(summaryOf('', 50)).toBe('')
+  })
+
+  test('keeps the card states and opened sections of the subagents still kept', () => {
+    const kept = [agent('Explore', 1), agent('Plan', 2)]
+    const cards = { Explore0: true, Explore1: false, Plan2: true }
+    expect(keptCards(cards, kept)).toEqual({ Explore1: false, Plan2: true })
+    expect(cards).toEqual({ Explore0: true, Explore1: false, Plan2: true })
+    expect(keptSections(['Explore0:task', 'Explore1:report', 'Plan2:task', 'Plan2:report'], kept)).toEqual(['Explore1:report', 'Plan2:task', 'Plan2:report'])
+    expect(keptSections(['a:b:task'], [{ ...agent('x', 0), id: 'a:b' }])).toEqual(['a:b:task'])
   })
 
   test('leaves out card states that are not a yes or no', () => {

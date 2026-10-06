@@ -75,6 +75,20 @@ export const addAgent = (agents: readonly Subagent[], agent: Subagent): Subagent
 export const finishAgent = (agents: readonly Subagent[], id: string, status: AgentStatus, now: number, report: string): Subagent[] =>
   agents.map(agent => (agent.id === id ? { ...agent, status, endedAt: now, report } : agent))
 
+const idsOf = (agents: readonly Subagent[]): Set<string> => new Set(agents.map(agent => agent.id))
+
+/** The card states of the subagents still kept; those dropped past MAX_AGENTS go with them. */
+export const keptCards = (cards: Readonly<Record<string, boolean>>, agents: readonly Subagent[]): Record<string, boolean> => {
+  const ids = idsOf(agents)
+  return Object.fromEntries(Object.entries(cards).filter(([id]) => ids.has(id)))
+}
+
+/** The sections opened in full (`id:task`, `id:report`) of the subagents still kept. */
+export const keptSections = (expanded: readonly string[], agents: readonly Subagent[]): string[] => {
+  const ids = idsOf(agents)
+  return expanded.filter(section => ids.has(section.slice(0, section.lastIndexOf(':'))))
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 
 export const toggle = (ids: readonly string[], id: string): string[] =>

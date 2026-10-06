@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PluginOptions, Register, Timer } from 'claude-code'
 
 import type { Subagent } from '../types'
-import { addAgent, addTokens, cleanDescription, cleanName, cleanText, countTool, finishAgent, nameFor, toggle, tokensOf, usableAgents, usableCards } from './feed'
+import { addAgent, addTokens, cleanDescription, cleanName, cleanText, countTool, finishAgent, keptCards, keptSections, nameFor, toggle, tokensOf, usableAgents, usableCards } from './feed'
 import { renderPane } from './pane'
 import { agentResultReport, handbackText, isHandback, rowText } from './reports'
 
@@ -130,7 +130,10 @@ export const register: Register = (on, options) => {
       agents: 0,
       tokens: null,
     }
-    await update($, agents, list => addAgent(usableAgents(list), agent))
+    const kept = await update($, agents, list => addAgent(usableAgents(list), agent))
+    // The cards dropped off the end take their open and shut states with them.
+    await update($, cards, states => keptCards(usableCards(states), kept))
+    await update($, expanded, sections => keptSections(sections, kept))
     startTicker($)
     if (settings.isAutoOpen && !hasAutoOpened) {
       hasAutoOpened = true
