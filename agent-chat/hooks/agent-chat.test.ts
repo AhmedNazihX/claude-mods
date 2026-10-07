@@ -483,6 +483,72 @@ for (const surface of SURFACES) {
       expect(all).toContain('(no text)')
     })
 
+    test('keeps a stopped subagent it messaged working while the list still says killed, and drops what its last run said', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      deliverMessages(on)
+      let statuses: Record<string, string> = { 'id-Again': 'running' }
+      listAgents(on, () => statuses)
+      await spawn($, 'Again')
+      await $.tool.call({ tool: 'SubagentHandback', report: 'Old handback.', agentId: 'id-Again' } as never)
+      statuses = { 'id-Again': 'killed' }
+      await clock.advance(1000)
+      await message($, 'id-Again', 'Pick it up again.')
+      await clock.advance(3000)
+      const ui = await mountPane($, surface)
+      const working = await textOf(ui)
+      expect(working).toContain('1 working · 0 finished')
+      expect(working).toContain('working · 3s')
+      statuses = { 'id-Again': 'running' }
+      await finish($, 'id-Again', 'New answer.')
+      await pressCard(ui, 'id-Again')
+      const done = await textOf(ui)
+      expect(done).toContain('New answer.')
+      expect(done.split('Old handback.').length - 1).toBe(1)
+      expect(done).not.toContain('(no text)')
+    })
+
+    test('places a message once, whether the resumed run makes its first request after it or before', async ($, on) => {
+      mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      deliverMessages(on)
+      answerSteps(on, [USAGE])
+      await spawn($, 'After')
+      await spawn($, 'Before')
+      await finish($, 'id-After', 'First.')
+      await finish($, 'id-Before', 'First.')
+      await message($, 'id-After', 'Go on.')
+      await step($, 'id-After', 0)
+      await step($, 'id-Before', 0)
+      await message($, 'id-Before', 'Go on.')
+      await finish($, 'id-After', 'Second.')
+      await finish($, 'id-Before', 'Second.')
+      const all = await openedText($, surface, 'id-After', 'id-Before')
+      expect(all.split('main asked').length - 1).toBe(4)
+      expect(all).not.toContain('(no text)')
+    })
+
+    test('adds a message to a subagent still at work to its conversation, and leaves out one for nobody it knows', async ($, on) => {
+      mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      deliverMessages(on)
+      listAgents(on, () => ({ 'id-Busy': 'running' }))
+      await spawn($, 'Busy', 'Start here.')
+      await message($, 'id-Busy', 'Also check the tests.')
+      await message($, 'someone-else', 'Not for it.')
+      const ui = await mountPane($, surface)
+      const working = await textOf(ui)
+      expect(working).toContain('Start here.')
+      expect(working).toContain('Also check the tests.')
+      expect(working).not.toContain('Not for it.')
+      expect(working.split('⋯ working').length - 1).toBe(1)
+      await finish($, 'id-Busy', 'Both done.')
+      await pressCard(ui, 'id-Busy')
+      const done = await textOf(ui)
+      expect(done.split('Explore replied').length - 1).toBe(1)
+      expect(done).toContain('Both done.')
+    })
+
     test('follows the newest card', async ($, on) => {
       mock.clock(on, { now: 0 })
       engineBeneath(on)
@@ -639,11 +705,15 @@ describe('helpers', () => {
       { id: 'Plan1', status: 'killed' },
       { id: 'Other', status: 'failed' },
     ]
-    expect(stoppedIds([running, done], listed)).toEqual(new Set(['Explore0']))
-    expect(stoppedIds([running], [{ id: 'Explore0', status: 'failed' }])).toEqual(new Set(['Explore0']))
+    expect(stoppedIds([running, done], listed, 0)).toEqual(new Set(['Explore0']))
+    expect(stoppedIds([running], [{ id: 'Explore0', status: 'failed' }], 0)).toEqual(new Set(['Explore0']))
     for (const status of ['running', 'idle', 'waiting', 'completed']) {
-      expect(stoppedIds([running], [{ id: 'Explore0', status }]).size).toBe(0)
+      expect(stoppedIds([running], [{ id: 'Explore0', status }], 0).size).toBe(0)
     }
+    // A card just messaged again is left be while the list still shows its last run's end.
+    const resumed = { ...running, startedAt: 100, followUps: [{ from: 'main', message: 'More.', report: null }] }
+    expect(stoppedIds([resumed], [{ id: 'Explore0', status: 'killed' }], 4000).size).toBe(0)
+    expect(stoppedIds([resumed], [{ id: 'Explore0', status: 'killed' }], 6000)).toEqual(new Set(['Explore0']))
     const after = stopAgents([running, done], new Set(['Explore0', 'Plan1']), 9, id => `${id} said`)
     expect(after).toEqual([{ ...running, status: 'failed', endedAt: 9, report: 'Explore0 said' }, done])
     expect(running.status).toBe('running')

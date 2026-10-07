@@ -129,12 +129,19 @@ export const keptSections = (expanded: readonly string[], agents: readonly Subag
 // person or by Claude, or dead on an error.
 const STOPPED_STATUSES: readonly string[] = ['killed', 'failed']
 
+// How long a card messaged again is not taken for stopped: until its new run
+// starts, the session may still list how its last one ended.
+const RESUME_GRACE_MS = 5000
+
+const isJustResumed = (agent: Subagent, now: number): boolean => agent.followUps.length > 0 && now - agent.startedAt < RESUME_GRACE_MS
+
 /**
  * The cards still working whose subagent the session lists as stopped: its
  * `turn.complete` may never come, so the card would say working for good.
+ * A card just messaged again is left be while its last run's end still shows.
  */
-export const stoppedIds = (agents: readonly Subagent[], listed: readonly { id: string; status: string }[]): Set<string> => {
-  const running = new Set(agents.filter(agent => agent.status === 'running').map(agent => agent.id))
+export const stoppedIds = (agents: readonly Subagent[], listed: readonly { id: string; status: string }[], now: number): Set<string> => {
+  const running = new Set(agents.filter(agent => agent.status === 'running' && !isJustResumed(agent, now)).map(agent => agent.id))
   return new Set(listed.filter(one => running.has(one.id) && STOPPED_STATUSES.includes(one.status)).map(one => one.id))
 }
 
@@ -174,22 +181,20 @@ export const firstLines = (text: string, maxLines: number): Shown => {
   return { text: [...kept, ...(fences % 2 === 1 ? ['```'] : [])].join('\n'), hiddenLines: lines.length - maxLines }
 }
 
-/**
- * The subagents as this version draws them. Stored state outlives a reload
- * of the mod, so it can hold what an older version kept (agents without a
- * task); those are left out, not drawn.
- */
 const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
 
 // A count an older version kept split by kind summed every request: it is left out.
 const asTokens = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
 
+// The follow-ups as stored, cleaned as when they were kept; an older version kept none.
 const usableFollowUps = (value: unknown): FollowUp[] =>
   Array.isArray(value)
-    ? value.filter(
-        (one): one is FollowUp =>
-          isRecord(one) && typeof one.from === 'string' && typeof one.message === 'string' && (one.report === null || typeof one.report === 'string'),
-      )
+    ? value
+        .filter(
+          (one): one is FollowUp =>
+            isRecord(one) && typeof one.from === 'string' && typeof one.message === 'string' && (one.report === null || typeof one.report === 'string'),
+        )
+        .map(one => ({ from: cleanName(one.from), message: cleanText(one.message), report: one.report === null ? null : cleanText(one.report) }))
     : []
 
 /** A stored subagent with the stats an older version did not keep filled in. */
@@ -204,6 +209,11 @@ const withStats = (agent: Subagent): Subagent => ({
   followUps: usableFollowUps(agent.followUps),
 })
 
+/**
+ * The subagents as this version draws them. Stored state outlives a reload
+ * of the mod, so it can hold what an older version kept (agents without a
+ * task); those are left out, not drawn.
+ */
 export const usableAgents = (agents: readonly unknown[]): Subagent[] =>
   agents
     .filter(

@@ -70,10 +70,14 @@ const reportSoFar = (id: string): string => cleanText(handedBack.get(id) || last
 // A subagent stopped by the person or by Claude, or dead on an error, may
 // end without a turn.complete; the session's list of agents still says so.
 async function markStopped($: EngineInterface) {
-  const stopped = stoppedIds(usableAgents(await read($, agents)), await $.agent.list())
-  if (stopped.size === 0) return
+  const listed = await $.agent.list()
   const time = await $.clock.now()
-  const after = await update($, agents, list => stopAgents(usableAgents(list), stopped, time, reportSoFar))
+  if (stoppedIds(usableAgents(await read($, agents)), listed, time).size === 0) return
+  // Judged again on the cards as they are: one may have been messaged meanwhile.
+  const after = await update($, agents, list => {
+    const kept = usableAgents(list)
+    return stopAgents(kept, stoppedIds(kept, listed, time), time, reportSoFar)
+  })
   if (!isAnyRunning(after)) stopTicker()
   followNewest($)
 }
@@ -99,7 +103,13 @@ function followNewest($: EngineInterface) {
 }
 
 // A subagent works again: on a message, or on a run seen starting without one.
+// A finished one starts a new run: what its last run said is not its reply.
 async function reopen($: EngineInterface, id: string, followUp?: FollowUp) {
+  const wasRunning = usableAgents(await read($, agents)).some(one => one.id === id && one.status === 'running')
+  if (!wasRunning) {
+    handedBack.delete(id)
+    lastSaid.delete(id)
+  }
   const time = await $.clock.now()
   await update($, agents, list => resumeAgent(usableAgents(list), id, time, followUp))
   startTicker($)

@@ -176,9 +176,10 @@ const renderCard = (elements: Elements, agent: Subagent, input: PaneInput) => {
 
 /**
  * The conversations between Claude and its subagents: one card per
- * subagent in the order they started, in its colour, with the task it was
- * handed and the report it sent back. A finished card shuts to its header
- * until it is opened; every card is drawn and the pane scrolls.
+ * subagent in the order they started or were last messaged, in its colour,
+ * with the task it was handed, the follow-ups, and the replies it sent back.
+ * A finished card shuts to its header until it is opened; every card is
+ * drawn and the pane scrolls.
  */
 export const renderPane = (elements: Elements, input: PaneInput) => {
   const { Box, Text } = elements
