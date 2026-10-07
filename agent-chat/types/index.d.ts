@@ -1,5 +1,15 @@
 export type AgentStatus = 'running' | 'done' | 'failed'
 
+/** A message sent to a subagent after its task, and what it replied to it. */
+export type FollowUp = {
+  /** Who sent it: `main`, or another subagent's name. */
+  from: string
+  /** The message, as markdown ('' when the run was seen but not the message). */
+  message: string
+  /** Its reply, as markdown; null until it replies. */
+  report: string | null
+}
+
 /** A subagent of the session: who it is, the task it was handed, and its report. */
 export type Subagent = {
   id: string
@@ -20,6 +30,8 @@ export type Subagent = {
   task: string
   /** What it sent back, as markdown; null while it works. */
   report: string | null
+  /** The messages sent to it after its task (SendMessage resumes a finished one), with their replies. */
+  followUps: FollowUp[]
   /** The model it runs on, as Claude Code resolved it ('' when not told). */
   model: string
   /** Its own calls so far: every tool, and of them its skills and the subagents it started. */

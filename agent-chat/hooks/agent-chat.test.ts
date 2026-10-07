@@ -2,8 +2,8 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { PALETTE, cleanName, cleanText, firstLines, formatDuration, formatTokens, isCardOpen, keptCards, keptSections, modelName, nameFor, stopAgents, stoppedIds, summaryOf, usableAgents, usableCards } from './feed'
-import type { Subagent } from '../types'
+import { PALETTE, cleanName, cleanText, finishAgent, firstLines, formatDuration, formatTokens, isCardOpen, keptCards, keptSections, latestReport, modelName, nameFor, resumeAgent, stopAgents, stoppedIds, summaryOf, usableAgents, usableCards } from './feed'
+import type { FollowUp, Subagent } from '../types'
 
 const SURFACES = ['terminal', 'desktop'] as const
 type Surface = (typeof SURFACES)[number]
@@ -60,6 +60,13 @@ const peek = {
     })
   },
 }
+
+// The engine beneath delivers each message, or refuses it.
+const deliverMessages = (on: On, isDelivered = true) =>
+  on('session.send', () => (isDelivered ? { isDelivered } : { isDelivered, reason: 'nobody by that name' }) as never)
+
+// Claude's SendMessage to a subagent, by its id or by its name.
+const message = ($: Engine, to: string, text: string) => $.session.send({ to, text } as never)
 
 const peekState = async ($: Engine) => JSON.parse((await $.command.run({ command: 'agent-chat-peek', args: '' } as never) as { text: string }).text)
 
@@ -397,6 +404,85 @@ for (const surface of SURFACES) {
       expect(await peekState($)).toEqual({ cards: { 'id-Next': true }, expanded: ['id-Next:task'] })
     })
 
+    test('opens a finished card again when Claude messages its subagent, at the end, keeping both replies', async ($, on) => {
+      const clock = mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      deliverMessages(on)
+      await spawn($, 'Review')
+      await spawn($, 'Other')
+      await clock.advance(5000)
+      await finish($, 'id-Review', 'First pass done.')
+      await finish($, 'id-Other', 'Other done.')
+      await clock.advance(10_000)
+      await message($, 'id-Review', 'Now fix the **two** nits.')
+      await clock.advance(3000)
+      const ui = await mountPane($, surface)
+      const working = await textOf(ui)
+      expect(working).toContain('1 working · 1 finished')
+      expect(working).toContain('working · 3s')
+      expect(working).toContain('First pass done.')
+      expect(working).toContain('Now fix the **two** nits.')
+      expect(working).toContain('⋯ working')
+      // The card it came back to moves after the one that started later.
+      const names = (await ui.findAll({ type: 'Text' })).filter(found => found.text === '● Explore')
+      expect(names.map(found => found.props.color)).toEqual([PALETTE[1], PALETTE[0]])
+      await finish($, 'id-Review', 'Fixed both.')
+      const shut = await textOf(ui)
+      expect(shut).toContain('done · 3s')
+      expect(shut).toContain('Fixed both.')
+      expect(shut).toContain('0 tools · 1 follow-up')
+      await pressCard(ui, 'id-Review')
+      const open = await textOf(ui)
+      expect(open.split('main asked').length - 1).toBe(2)
+      expect(open.split('Explore replied').length - 1).toBe(2)
+      expect(open).toContain('First pass done.')
+      expect(open).toContain('Fixed both.')
+      expect(open).not.toContain('⋯ working')
+    })
+
+    test('finds the subagent a message names', async ($, on) => {
+      mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      on('agent.list', () => ({ value: [{ id: 'id-Named', status: 'completed', description: '', type: 'Explore', name: 'reviewer' }] }) as never)
+      deliverMessages(on)
+      await spawn($, 'Named')
+      await finish($, 'id-Named', 'Done.')
+      await message($, 'reviewer', 'One more thing.')
+      const ui = await mountPane($, surface)
+      const working = await textOf(ui)
+      expect(working).toContain('1 working · 0 finished')
+      expect(working).toContain('One more thing.')
+    })
+
+    test('leaves a finished card be when a message to it is not delivered', async ($, on) => {
+      mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      deliverMessages(on, false)
+      await spawn($, 'Refused')
+      await finish($, 'id-Refused', 'Done.')
+      await message($, 'id-Refused', 'Never arrives.')
+      const all = await openedText($, surface, 'id-Refused')
+      expect(all).toContain('0 working · 1 finished')
+      expect(all).not.toContain('Never arrives.')
+    })
+
+    test('opens a finished card again when its subagent starts a new run the pane saw no message for', async ($, on) => {
+      mock.clock(on, { now: 0 })
+      engineBeneath(on)
+      answerSteps(on, [USAGE])
+      await spawn($, 'Unseen')
+      await finish($, 'id-Unseen', 'First.')
+      await step($, 'id-Unseen', 0)
+      const ui = await mountPane($, surface)
+      expect(await textOf(ui)).toContain('1 working · 0 finished')
+      await finish($, 'id-Unseen', 'Second.')
+      await pressCard(ui, 'id-Unseen')
+      const all = await textOf(ui)
+      expect(all).toContain('First.')
+      expect(all).toContain('Second.')
+      expect(all).toContain('(no text)')
+    })
+
     test('follows the newest card', async ($, on) => {
       mock.clock(on, { now: 0 })
       engineBeneath(on)
@@ -445,6 +531,7 @@ describe('helpers', () => {
     skills: 0,
     agents: 0,
     tokens: null,
+    followUps: [] as FollowUp[],
   })
 
   test('nameFor gives the type, numbered only when its colour comes round again', () => {
@@ -487,6 +574,37 @@ describe('helpers', () => {
     // A count kept split by kind summed every request, so it is left out.
     expect(usableAgents([{ ...old, tokens: { input: 2000, output: 400, cacheRead: 10_000, cacheWrite: 0 } }])[0]?.tokens).toBeNull()
     expect(usableAgents([{ ...old, tokens: 12_400 }])[0]?.tokens).toBe(12_400)
+    expect(usableAgents([old])[0]?.followUps).toEqual([])
+    const kept = { from: 'main', message: 'More.', report: null }
+    expect(usableAgents([{ ...old, followUps: [kept, { from: 'main' }, 'More.', null] }])[0]?.followUps).toEqual([kept])
+  })
+
+  test('a message opens a finished card again at the end, and its reply answers the message', () => {
+    const done = { ...agent('Explore', 0), status: 'done' as const, endedAt: 5, report: 'First.' }
+    const other = agent('Plan', 1)
+    const message = { from: 'main', message: 'More.', report: null }
+    const resumed = resumeAgent([done, other], 'Explore0', 9, message)
+    expect(resumed.map(one => one.id)).toEqual(['Plan1', 'Explore0'])
+    expect(resumed[1]).toMatchObject({ status: 'running', startedAt: 9, endedAt: null, report: 'First.', followUps: [message] })
+    expect(done.status).toBe('done')
+    const finished = finishAgent(resumed, 'Explore0', 'done', 12, 'Second.')
+    expect(finished[1]).toMatchObject({ report: 'First.', followUps: [{ ...message, report: 'Second.' }] })
+    expect(latestReport(finished[1] as Subagent)).toBe('Second.')
+  })
+
+  test('a run seen before its message waits for it, and a working card takes a message in place', () => {
+    const done = { ...agent('Explore', 0), status: 'done' as const, endedAt: 5, report: 'First.' }
+    const seen = resumeAgent([done], 'Explore0', 9)
+    expect(seen[0]?.followUps).toEqual([{ from: 'main', message: '', report: null }])
+    // Its run seen again while it works changes nothing.
+    expect(resumeAgent(seen, 'Explore0', 10)).toEqual(seen)
+    const message = { from: 'main', message: 'More.', report: null }
+    const placed = resumeAgent(seen, 'Explore0', 10, message)
+    expect(placed[0]).toMatchObject({ startedAt: 9, followUps: [message] })
+    const other = agent('Plan', 1)
+    expect(resumeAgent([other, ...placed], 'Explore0', 11, { ...message, message: 'And this.' }).map(one => one.id)).toEqual(['Plan1', 'Explore0'])
+    expect(resumeAgent(placed, 'Explore0', 11, { ...message, message: 'And this.' })[0]?.followUps.length).toBe(2)
+    expect(resumeAgent([other], 'missing', 11, message)).toEqual([other])
   })
 
   test('a card is open while its subagent works, shut once done, unless set by hand', () => {

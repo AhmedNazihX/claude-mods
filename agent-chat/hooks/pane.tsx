@@ -1,7 +1,7 @@
 import type { ElementTable } from 'claude-code'
 
 import type { Subagent } from '../types'
-import { briefStatsText, colourOf, firstLines, formatDuration, isCardOpen, statsText, summaryOf, tokensText } from './feed'
+import { briefStatsText, colourOf, firstLines, formatDuration, isCardOpen, latestReport, statsText, summaryOf, tokensText } from './feed'
 
 type Elements = Pick<ElementTable, 'Box' | 'Text' | 'Markdown' | 'Button'>
 
@@ -93,36 +93,66 @@ const renderHeader = ({ Box, Text, Button }: Elements, agent: Subagent, input: P
   )
 }
 
-/** What an open card shows under its header: stats, the task and the report. */
+/** One message and its reply; `ask` and `reply` name their sections (`task` and `report` for the first). */
+type Exchange = { from: string; message: string; report: string | null; ask: string; reply: string }
+
+/** The card's conversation in order: the task and its report, then each follow-up and its reply. */
+const exchangesOf = (agent: Subagent): Exchange[] => [
+  { from: agent.parent, message: agent.task, report: agent.report, ask: 'task', reply: 'report' },
+  ...agent.followUps.map((followUp, i) => ({ ...followUp, ask: `ask-${i + 1}`, reply: `reply-${i + 1}` })),
+]
+
+/** A part set apart from the one above: a ruled line on the terminal, spacing on a desktop. */
+const renderApart = ({ Box, Text }: Elements, input: PaneInput, key: string, part: ReturnType<typeof renderSection>) => (
+  <Box key={key} flexDirection="column" marginTop={input.hasRule ? 0 : 1}>
+    {input.hasRule ? <Text dimColor>{'─'.repeat(Math.max(input.columns - CARD_CHROME, 4))}</Text> : null}
+    {part}
+  </Box>
+)
+
+/**
+ * One message to the subagent and its reply. A message with no reply yet
+ * says the subagent works on it, unless another came after it.
+ */
+const renderExchange = (elements: Elements, agent: Subagent, input: PaneInput, exchange: Exchange, index: number, isLast: boolean) => {
+  const { Box, Text } = elements
+  const section = (part: string, heading: string, text: string, maxLines: number) =>
+    renderSection(elements, `${agent.id}-${part}`, heading, text, maxLines, input.expanded.has(`${agent.id}:${part}`), () =>
+      input.onToggle(`${agent.id}:${part}`),
+    )
+  const ask = section(exchange.ask, `${exchange.from} asked`, exchange.message, TASK_LINES)
+  const isWorking = exchange.report === null && isLast && agent.status === 'running'
+  return (
+    <Box key={`${agent.id}-${exchange.ask}-exchange`} flexDirection="column">
+      {index === 0 ? ask : renderApart(elements, input, `${agent.id}-${exchange.ask}-apart`, ask)}
+      {isWorking ? <Text color={colourOf(agent.colour)}>{'⋯ working'}</Text> : null}
+      {exchange.report === null
+        ? null
+        : renderApart(elements, input, `${agent.id}-${exchange.reply}-apart`, section(exchange.reply, `${agent.name} replied`, exchange.report, REPORT_LINES))}
+    </Box>
+  )
+}
+
+/** What an open card shows under its header: stats, then the task, the follow-ups and their replies. */
 const renderBody = (elements: Elements, agent: Subagent, input: PaneInput) => {
   const { Box, Text } = elements
-  const colour = colourOf(agent.colour)
-  const toggle = (part: string) => () => input.onToggle(`${agent.id}:${part}`)
-  const isOpen = (part: string) => input.expanded.has(`${agent.id}:${part}`)
+  const exchanges = exchangesOf(agent)
   return (
     <Box flexDirection="column">
       <Text dimColor>{statsText(agent)}</Text>
       {agent.tokens === null ? null : <Text dimColor>{tokensText(agent)}</Text>}
-      {renderSection(elements, `${agent.id}-task`, `${agent.parent} asked`, agent.task, TASK_LINES, isOpen('task'), toggle('task'))}
-      {agent.report === null ? (
-        <Text color={colour}>{'⋯ working'}</Text>
-      ) : (
-        <Box flexDirection="column" marginTop={input.hasRule ? 0 : 1}>
-          {input.hasRule ? <Text dimColor>{'─'.repeat(Math.max(input.columns - CARD_CHROME, 4))}</Text> : null}
-          {renderSection(elements, `${agent.id}-report`, `${agent.name} replied`, agent.report, REPORT_LINES, isOpen('report'), toggle('report'))}
-        </Box>
-      )}
+      {exchanges.map((exchange, i) => renderExchange(elements, agent, input, exchange, i, i === exchanges.length - 1))}
     </Box>
   )
 }
 
 /**
  * What a shut card shows under its header: the task in a few words, the
- * start of the report, and its tools and tokens.
+ * start of its latest reply, and its tools and tokens.
  */
 const renderSummary = ({ Box, Text }: Elements, agent: Subagent, input: PaneInput) => {
   const width = Math.max(input.columns - CARD_CHROME, 10)
-  const summary = agent.report === null ? '⋯ working' : summaryOf(agent.report, width * SUMMARY_LINES)
+  const summary = agent.status === 'running' ? '⋯ working' : summaryOf(latestReport(agent) ?? '', width * SUMMARY_LINES)
   return (
     <Box flexDirection="column">
       {agent.description === '' ? null : <Text>{agent.description}</Text>}

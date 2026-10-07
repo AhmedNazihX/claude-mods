@@ -1,8 +1,8 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, PluginOptions, Register, Timer } from 'claude-code'
+import type { EngineInterface, PluginOptions, Register, SessionSendInput, Timer } from 'claude-code'
 
-import type { Subagent } from '../types'
-import { addAgent, cleanDescription, cleanName, cleanText, countTool, finishAgent, keptCards, keptSections, nameFor, stopAgents, stoppedIds, toggle, tokensOf, usableAgents, usableCards } from './feed'
+import type { FollowUp, Subagent } from '../types'
+import { addAgent, cleanDescription, cleanName, cleanText, countTool, finishAgent, keptCards, keptSections, nameFor, resumeAgent, stopAgents, stoppedIds, toggle, tokensOf, usableAgents, usableCards } from './feed'
 import { renderPane } from './pane'
 import { agentResultReport, handbackText, isHandback, rowText } from './reports'
 
@@ -98,6 +98,29 @@ function followNewest($: EngineInterface) {
   $.ui.scroll({ in: PANE, to: 'end' }).catch(error => log($, 'could not scroll the pane', error))
 }
 
+// A subagent works again: on a message, or on a run seen starting without one.
+async function reopen($: EngineInterface, id: string, followUp?: FollowUp) {
+  const time = await $.clock.now()
+  await update($, agents, list => resumeAgent(usableAgents(list), id, time, followUp))
+  startTicker($)
+  followNewest($)
+}
+
+// The card a message is for: `to` is its id, or the name SendMessage knows it by.
+async function recipientOf($: EngineInterface, to: string, known: readonly Subagent[]): Promise<string | undefined> {
+  if (known.some(agent => agent.id === to)) return to
+  const listed = (await $.agent.list()).find(one => one.name === to || one.teammateId === to)
+  return listed !== undefined && known.some(agent => agent.id === listed.id) ? listed.id : undefined
+}
+
+async function noteMessage($: EngineInterface, e: SessionSendInput) {
+  const known = usableAgents(await read($, agents))
+  const id = await recipientOf($, e.to, known)
+  if (id === undefined) return
+  const from = known.find(agent => agent.id === e.agentId)?.name ?? 'main'
+  await reopen($, id, { from, message: cleanText(e.text), report: null })
+}
+
 export const register: Register = (on, options) => {
   const settings = toSettings(options)
 
@@ -146,6 +169,7 @@ export const register: Register = (on, options) => {
       skills: 0,
       agents: 0,
       tokens: null,
+      followUps: [],
     }
     const kept = await update($, agents, list => addAgent(usableAgents(list), agent))
     // The cards dropped off the end take their open and shut states with them.
@@ -186,15 +210,30 @@ export const register: Register = (on, options) => {
 
   // Each model request of a subagent replaces its tokens as it ends, so the
   // count follows its context while it works and stops on its last request,
-  // the number Claude Code's own agent card shows.
+  // the number Claude Code's own agent card shows. A finished subagent's
+  // first request of a new run is a message the send hook did not place:
+  // its card works again, the message unseen.
   on('turn.step', async function* ($, e, next) {
-    const result = yield* next(e)
     const id = e.agentId
+    if (id !== undefined && e.index === 0) {
+      const agent = usableAgents(await read($, agents)).find(one => one.id === id)
+      if (agent !== undefined && agent.status !== 'running') await reopen($, id).catch(error => log($, 'could not reopen a card', error))
+    }
+    const result = yield* next(e)
     if (id !== undefined && result.usage !== null && usableAgents(await read($, agents)).some(one => one.id === id)) {
       const tokens = tokensOf(result.usage)
       await update($, agents, list => usableAgents(list).map(one => (one.id === id ? { ...one, tokens } : one)))
     }
     return result
+  })
+
+  // Claude (or a subagent) messages a subagent. SendMessage resumes a
+  // finished one under its id with no agent.spawn, so its card works again
+  // and the message joins its conversation, once it was delivered.
+  on('session.send', async ($, e, next) => {
+    const sent = await next(e)
+    if (sent.isDelivered) await noteMessage($, e).catch(error => log($, 'could not note a message to a subagent', error))
+    return sent
   })
 
   // The last thing each subagent said, the report of last resort.

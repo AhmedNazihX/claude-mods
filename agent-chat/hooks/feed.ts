@@ -1,4 +1,4 @@
-import type { AgentStatus, Subagent } from '../types'
+import type { AgentStatus, FollowUp, Subagent } from '../types'
 
 const MAX_AGENTS = 50
 const MS_PER_SECOND = 1000
@@ -71,9 +71,45 @@ export const nameFor = (agents: readonly Subagent[], type: string, colour: numbe
 /** Adds a subagent, dropping the oldest past MAX_AGENTS. */
 export const addAgent = (agents: readonly Subagent[], agent: Subagent): Subagent[] => [...agents, agent].slice(-MAX_AGENTS)
 
+/** A reply answers the latest message: the task, else the last follow-up. */
+const withReport = (agent: Subagent, report: string): Subagent => {
+  const last = agent.followUps.at(-1)
+  return last === undefined ? { ...agent, report } : { ...agent, followUps: [...agent.followUps.slice(0, -1), { ...last, report }] }
+}
+
+/** The latest reply it sent, or null before its first. */
+export const latestReport = (agent: Subagent): string | null =>
+  [agent.report, ...agent.followUps.map(one => one.report)].reduce<string | null>((latest, report) => report ?? latest, null)
+
 /** Its run ended: its status, when, and the report it sent back. */
 export const finishAgent = (agents: readonly Subagent[], id: string, status: AgentStatus, now: number, report: string): Subagent[] =>
-  agents.map(agent => (agent.id === id ? { ...agent, status, endedAt: now, report } : agent))
+  agents.map(agent => (agent.id === id ? { ...withReport(agent, report), status, endedAt: now } : agent))
+
+// A run seen starting before its message was: the message takes its place.
+const addFollowUp = (followUps: readonly FollowUp[], followUp: FollowUp): FollowUp[] => {
+  const last = followUps.at(-1)
+  const isUnsaid = last !== undefined && last.message === '' && last.report === null
+  return isUnsaid ? [...followUps.slice(0, -1), followUp] : [...followUps, followUp]
+}
+
+/**
+ * A message reached a subagent (`followUp`), or a run of it was seen
+ * starting without one. A finished card works again with its timer
+ * restarted, and moves to the end, where the pane follows; a message to one
+ * still working joins its conversation where it is.
+ */
+export const resumeAgent = (agents: readonly Subagent[], id: string, now: number, followUp?: FollowUp): Subagent[] => {
+  const agent = agents.find(one => one.id === id)
+  if (agent === undefined) return [...agents]
+  const isRunning = agent.status === 'running'
+  if (isRunning && followUp === undefined) return [...agents]
+  const resumed: Subagent = {
+    ...agent,
+    ...(isRunning ? {} : { status: 'running', startedAt: now, endedAt: null }),
+    followUps: addFollowUp(agent.followUps, followUp ?? { from: agent.parent, message: '', report: null }),
+  }
+  return isRunning ? agents.map(one => (one.id === id ? resumed : one)) : [...agents.filter(one => one.id !== id), resumed]
+}
 
 const idsOf = (agents: readonly Subagent[]): Set<string> => new Set(agents.map(agent => agent.id))
 
@@ -104,7 +140,9 @@ export const stoppedIds = (agents: readonly Subagent[], listed: readonly { id: s
 
 /** Their runs were stopped: each card says so, with what its subagent said last. */
 export const stopAgents = (agents: readonly Subagent[], ids: ReadonlySet<string>, now: number, reportOf: (id: string) => string): Subagent[] =>
-  agents.map(agent => (agent.status === 'running' && ids.has(agent.id) ? { ...agent, status: 'failed', endedAt: now, report: reportOf(agent.id) } : agent))
+  agents.map(agent =>
+    agent.status === 'running' && ids.has(agent.id) ? { ...withReport(agent, reportOf(agent.id)), status: 'failed', endedAt: now } : agent,
+  )
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 
@@ -146,6 +184,14 @@ const count = (value: unknown): number => (typeof value === 'number' && Number.i
 // A count an older version kept split by kind summed every request: it is left out.
 const asTokens = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
 
+const usableFollowUps = (value: unknown): FollowUp[] =>
+  Array.isArray(value)
+    ? value.filter(
+        (one): one is FollowUp =>
+          isRecord(one) && typeof one.from === 'string' && typeof one.message === 'string' && (one.report === null || typeof one.report === 'string'),
+      )
+    : []
+
 /** A stored subagent with the stats an older version did not keep filled in. */
 const withStats = (agent: Subagent): Subagent => ({
   ...agent,
@@ -155,6 +201,7 @@ const withStats = (agent: Subagent): Subagent => ({
   skills: count(agent.skills),
   agents: count(agent.agents),
   tokens: asTokens(agent.tokens),
+  followUps: usableFollowUps(agent.followUps),
 })
 
 export const usableAgents = (agents: readonly unknown[]): Subagent[] =>
@@ -217,9 +264,9 @@ export const statsText = (agent: Subagent): string =>
     .filter((part): part is string => part !== undefined)
     .join(' · ')
 
-/** `6 tools · 12k tokens`: a shut card's stats, the tokens once counted. */
+/** `6 tools · 1 follow-up · 12k tokens`: a shut card's stats, follow-ups and tokens once there are any. */
 export const briefStatsText = (agent: Subagent): string =>
-  [plural(agent.tools, 'tool'), tokensText(agent)]
+  [plural(agent.tools, 'tool'), agent.followUps.length === 0 ? '' : plural(agent.followUps.length, 'follow-up'), tokensText(agent)]
     .filter(part => part !== '')
     .join(' · ')
 
