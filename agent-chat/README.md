@@ -15,7 +15,7 @@ A side pane with the conversations between Claude and its subagents, live: one c
 ╭──────────────────────────────────────────────────╮
 │ ▾ ● Explore                         working · 8s │
 │ haiku 4.5 · 2 tools · 0 skills · 0 agents        │
-│ 4k tokens · 1k in · 200 out · 3k cache read …    │
+│ 4k tokens                                        │
 │ main asked                                       │
 │   In done-chime, list each hook …                │
 │ ⋯ working                                        │
@@ -24,7 +24,7 @@ A side pane with the conversations between Claude and its subagents, live: one c
 
 - **A card is open while its subagent works and shuts to a summary once it's done**: the task in a few words, the start of the report as plain text (two lines' worth), and its tools and tokens. Click `▸` to open it in full, `▾` to shut it again. A card you open or shut by hand stays that way, even when its subagent finishes.
 - **One card per subagent**, in the order they started, its border, dot and name in the subagent's colour. Two `Explore` subagents read apart by colour: blue, pink, yellow, violet, cyan, orange, teal, none of them the green and red kept for `done` and `stopped`. Past seven, when a colour comes round again for the same type, the name gets a number (`Explore #2`).
-- **Under the name, what it ran on and did**: its model, its own tool calls (counted live, with the skills it used and the subagents it started among them), and the tokens it went through, on a line of their own: the total, then input, output, and the cache it read and wrote. They count up live, one model request at a time, while the subagent works.
+- **Under the name, what it ran on and did**: its model, its own tool calls (counted live, with the skills it used and the subagents it started among them), and its tokens on a line of their own, counted as Claude Code's own agent card counts them: its last model request's whole input (cached or not) plus the reply, so they read as how big its context got, not a sum of every request. They follow it live, one model request at a time, while the subagent works, and stop on the same number Claude Code shows when it's done.
 - **The task and the report are drawn as markdown**, as a reply is: bold, code, lists and links read as they should.
 - **Long ones are cut** to their first lines (4 of a task, 6 of a report); `▾ show N more lines` opens the rest and `▴ show less` shuts it again. Click it, or press it once the pane has the keys.
 - **The time counts up live** while a subagent works, and stays at its total once it is done.

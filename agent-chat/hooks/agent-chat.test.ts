@@ -78,6 +78,15 @@ const drain = async (call: unknown): Promise<void> => {
   }
 }
 
+// Each model request of a subagent ends with its usage: the one for its index.
+const answerSteps = (on: On, usages: readonly (typeof USAGE)[]) =>
+  on('turn.step', async function* ($, e) {
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: { ...usages[e.index] } } as never
+  })
+
+const step = ($: Engine, agentId: string, index: number) =>
+  drain($.turn.step({ turnId: 't', index, model: 'haiku', messageCount: 1, agentId } as never))
+
 const mountPane = ($: Engine, surface: Surface) =>
   $.ui.mount({
     plugin: 'agent-chat',
@@ -228,7 +237,7 @@ for (const surface of SURFACES) {
       expect((await openedText($, surface, 'id-Ruled')).includes('────')).toBe(surface === 'terminal')
     })
 
-    test('shows the model and counts tools, skills and agents live, then the tokens', async ($, on) => {
+    test('shows the model and counts tools, skills and agents live', async ($, on) => {
       mock.clock(on, { now: 0 })
       engineBeneath(on)
       await spawn($, 'Counted')
@@ -242,26 +251,28 @@ for (const surface of SURFACES) {
       await pressCard(ui, 'id-Counted')
       const done = await textOf(ui)
       expect(done).toContain('haiku 4.5 · 4 tools · 1 skill · 1 agent')
-      expect(done).toContain('12k tokens · 2k in · 400 out · 10k cache read · 0 cache write')
+      // The run's usage sums every request, so it is not drawn as tokens.
+      expect(done).not.toContain('tokens')
     })
 
-    test('counts tokens request by request while a subagent works, and not twice at the end', async ($, on) => {
+    test('shows the last request of a subagent as its tokens, live, as Claude Code counts them, not a sum', async ($, on) => {
       mock.clock(on, { now: 0 })
       engineBeneath(on)
-      // Each model request of the subagent ends with its usage.
-      on('turn.step', async function* ($, e) {
-        return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: { ...USAGE } } as never
-      })
+      // The context grows: the second request reads more from the cache.
+      answerSteps(on, [USAGE, { ...USAGE, cache_read_input_tokens: 20_000, cache_creation_input_tokens: 1000 }])
       await spawn($, 'Live')
       const ui = await mountPane($, surface)
-      const step = (index: number) => drain($.turn.step({ turnId: 't', index, model: 'haiku', messageCount: 1, agentId: 'id-Live' } as never))
-      await step(0)
-      expect(await textOf(ui)).toContain('12k tokens · 2k in · 400 out')
-      await step(1)
-      expect(await textOf(ui)).toContain('25k tokens · 4k in · 800 out')
+      await step($, 'id-Live', 0)
+      // 2k in + 10k cache read + 0 cache write + 400 out.
+      expect(await textOf(ui)).toContain('12k tokens')
+      await step($, 'id-Live', 1)
+      // 2k + 20k + 1k + 400, not the 36k of both added up.
+      expect(await textOf(ui)).toContain('23k tokens')
       await finish($, 'id-Live', 'Done.')
       await pressCard(ui, 'id-Live')
-      expect(await textOf(ui)).toContain('25k tokens · 4k in · 800 out')
+      const done = await textOf(ui)
+      expect(done).toContain('23k tokens')
+      expect(done).not.toContain('36k')
     })
 
     test('names the subagent that started a nested one, and marks a run cut short', async ($, on) => {
@@ -278,8 +289,10 @@ for (const surface of SURFACES) {
     test('shuts a finished card to a summary and opens it on a click', async ($, on) => {
       mock.clock(on, { now: 0 })
       engineBeneath(on)
+      answerSteps(on, [USAGE])
       await spawn($, 'Folded', 'Find it.')
       await $.tool.call({ tool: 'Read', agentId: 'id-Folded' } as never)
+      await step($, 'id-Folded', 0)
       await finish($, 'id-Folded', '## Found it\n\nIn **band.tsx**, see `renderBand`.')
       const ui = await mountPane($, surface)
       const shut = await textOf(ui)
@@ -471,8 +484,9 @@ describe('helpers', () => {
   test('fills in the stats an older version did not store', () => {
     const old = { id: 'a', type: 'Explore', name: 'Explore', task: 'go', report: null }
     expect(usableAgents([old])[0]).toMatchObject({ model: '', tools: 0, skills: 0, agents: 0, tokens: null })
-    // A count kept as one number has no split, so it is left out.
-    expect(usableAgents([{ ...old, tokens: 12_000 }])[0]?.tokens).toBeNull()
+    // A count kept split by kind summed every request, so it is left out.
+    expect(usableAgents([{ ...old, tokens: { input: 2000, output: 400, cacheRead: 10_000, cacheWrite: 0 } }])[0]?.tokens).toBeNull()
+    expect(usableAgents([{ ...old, tokens: 12_400 }])[0]?.tokens).toBe(12_400)
   })
 
   test('a card is open while its subagent works, shut once done, unless set by hand', () => {

@@ -26,12 +26,13 @@ export type Subagent = {
   tools: number
   skills: number
   agents: number
-  /** The tokens its runs went through, split by kind, once a run ended. */
-  tokens: TokenCounts | null
+  /**
+   * Its last model request's tokens, as Claude Code's agent card counts
+   * them: the whole input (new, cached and caching) plus the reply. Not a
+   * sum: each request replaces it, so it reads as how big the context got.
+   */
+  tokens: number | null
 }
-
-/** A subagent's tokens: input and output, and the cache it read and wrote. */
-export type TokenCounts = { input: number; output: number; cacheRead: number; cacheWrite: number }
 
 declare module 'claude-code' {
   interface PluginState {
